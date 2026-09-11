@@ -6,6 +6,997 @@
 <title>Cartão-Resposta — Simulado</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --paper:#EFEBE2;
+    --paper-dark:#E4DECD;
+    --card:#FBF9F3;
+    --ink:#1F2A3D;
+    --graphite:#4A473F;
+    --line:#C9C1AA;
+    --line-soft:#DAD3BE;
+    --green:#2F6F4F;
+    --green-bg:#DEEAE0;
+    --red:#A63D40;
+    --red-bg:#F4DEDD;
+    --brass:#A97E44;
+    --brass-bg:#F1E3C8;
+    --white:#FFFDF8;
+    --radius:3px;
+    --serif: 'Source Serif 4', Georgia, serif;
+    --sans: 'Public Sans', -apple-system, Segoe UI, sans-serif;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001ms !important; transition-duration:0.001ms !important; }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--paper);
+    background-image:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 1px, transparent 1px, transparent 3px);
+    color:var(--graphite);
+    font-family:var(--sans);
+    min-height:100vh;
+    padding:28px 16px 60px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:760px; margin:0 auto; }
+
+  /* ---------- Masthead ---------- */
+  .masthead{
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom:2px solid var(--ink); padding-bottom:14px; margin-bottom:28px;
+    flex-wrap:wrap; gap:6px;
+  }
+  .masthead h1{
+    font-family:var(--serif); font-weight:700; font-size:1.5rem; color:var(--ink); margin:0;
+    letter-spacing:0.01em;
+  }
+  .masthead .tag{ font-size:0.8rem; color:var(--graphite); opacity:0.75; }
+  .stamp-btn{
+    font-family:var(--sans); font-size:0.78rem; font-weight:600; color:var(--ink);
+    background:none; border:1.5px solid var(--ink); border-radius:var(--radius);
+    padding:6px 12px; cursor:pointer;
+  }
+  .stamp-btn:hover{ background:var(--ink); color:var(--white); }
+  .stamp-btn:focus-visible, button:focus-visible, textarea:focus-visible, [tabindex]:focus-visible{
+    outline:3px solid var(--brass); outline-offset:2px;
+  }
+
+  /* ---------- Card shell ---------- */
+  .sheet{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:6px;
+    box-shadow:0 1px 0 var(--line-soft), 0 8px 24px -18px rgba(31,42,61,0.4);
+    padding:32px;
+  }
+  @media (max-width:600px){ .sheet{ padding:20px; } }
+
+  /* ---------- Paste view ---------- */
+  .lede{ font-family:var(--serif); font-size:1.05rem; line-height:1.55; color:var(--ink); margin:0 0 18px; max-width:62ch; }
+  textarea{
+    width:100%; min-height:280px; resize:vertical;
+    font-family:'Courier New', monospace; font-size:0.92rem; line-height:1.5;
+    padding:16px; border:1px solid var(--line); border-radius:var(--radius);
+    background:var(--white); color:var(--ink);
+  }
+  .hint{ font-size:0.82rem; color:var(--graphite); opacity:0.7; margin-top:8px; line-height:1.5; }
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:20px; }
+  .btn-primary{
+    font-family:var(--sans); font-weight:600; font-size:0.95rem; color:var(--white);
+    background:var(--ink); border:none; border-radius:var(--radius);
+    padding:12px 22px; cursor:pointer;
+  }
+  .btn-primary:hover{ background:#31405c; }
+  .btn-primary:disabled{ opacity:0.4; cursor:not-allowed; }
+  .btn-ghost{
+    font-family:var(--sans); font-weight:600; font-size:0.9rem; color:var(--ink);
+    background:none; border:1.5px solid var(--line); border-radius:var(--radius);
+    padding:11px 18px; cursor:pointer;
+  }
+  .btn-ghost:hover{ border-color:var(--ink); }
+  .error-box{
+    margin-top:16px; padding:12px 14px; border-radius:var(--radius);
+    background:var(--red-bg); color:#7a2b2d; font-size:0.88rem; border:1px solid #d9b3b3;
+  }
+
+  /* ---------- Saved decks ---------- */
+  .saved-list{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+  .saved-item{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px 14px; border:1px solid var(--line-soft); border-radius:var(--radius); background:var(--white);
+  }
+  .saved-item .meta{ font-size:0.82rem; color:var(--graphite); opacity:0.75; }
+  .saved-item .name{ font-family:var(--serif); font-size:0.98rem; color:var(--ink); }
+  .saved-actions{ display:flex; gap:6px; }
+  .link-btn{ background:none; border:none; color:var(--ink); text-decoration:underline; cursor:pointer; font-size:0.82rem; padding:4px; font-family:var(--sans); }
+  .link-btn.danger{ color:var(--red); }
+
+  /* ---------- Review view ---------- */
+  .review-item{
+    border:1px solid var(--line-soft); border-radius:var(--radius); padding:14px 16px; margin-bottom:10px; background:var(--white);
+  }
+  .review-item.needs{ border-color:var(--brass); background:var(--brass-bg); }
+  .review-top{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+  .review-num{ font-family:var(--serif); font-weight:700; color:var(--ink); }
+  .review-text{ font-size:0.92rem; margin:6px 0 8px; color:var(--graphite); }
+  .badge{ font-size:0.76rem; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+  .badge.ok{ background:var(--green-bg); color:var(--green); }
+  .badge.missing{ background:var(--brass-bg); color:#7a5a1f; border:1px solid var(--brass); }
+  .letter-pick{ display:flex; gap:6px; margin-top:6px; flex-wrap:wrap; }
+  .letter-pick button{
+    width:30px; height:30px; border-radius:50%; border:1.5px solid var(--line); background:var(--white);
+    font-family:var(--sans); font-weight:600; font-size:0.82rem; cursor:pointer; color:var(--ink);
+  }
+  .letter-pick button.chosen{ background:var(--ink); color:var(--white); border-color:var(--ink); }
+
+  /* ---------- Progress bubbles ---------- */
+  .progress-row{ display:flex; gap:5px; flex-wrap:wrap; margin-bottom:24px; }
+  .prog-dot{
+    width:22px; height:22px; border-radius:50%; border:1.5px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    font-size:0.68rem; font-weight:600; color:var(--graphite); background:var(--white);
+    cursor:pointer;
+  }
+  .prog-dot.current{ border-color:var(--ink); border-width:2px; }
+  .prog-dot.correct{ background:var(--green); border-color:var(--green); color:var(--white); }
+  .prog-dot.wrong{ background:var(--red); border-color:var(--red); color:var(--white); }
+  .prog-dot.skip{ background:var(--paper-dark); }
+  .prog-dot.answered-flag{ background:var(--ink); border-color:var(--ink); color:var(--white); }
+
+  /* ---------- Quiz card ---------- */
+  .q-meta{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
+  .q-count{ font-size:0.82rem; color:var(--graphite); opacity:0.75; letter-spacing:0.02em; }
+  .q-text{ font-family:var(--serif); font-size:1.18rem; line-height:1.5; color:var(--ink); margin:4px 0 22px; }
+
+  .alt-list{ display:flex; flex-direction:column; gap:10px; }
+  .alt{
+    display:flex; align-items:flex-start; gap:12px;
+    padding:12px 14px; border:1.5px solid var(--line); border-radius:var(--radius);
+    background:var(--white); cursor:pointer; text-align:left; width:100%;
+    font-family:var(--sans); font-size:0.97rem; color:var(--graphite);
+  }
+  .alt:hover{ border-color:var(--ink); }
+  .alt .bubble{
+    flex:0 0 28px; width:28px; height:28px; border-radius:50%;
+    border:1.5px solid var(--line); display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:0.85rem; color:var(--ink); background:var(--white);
+  }
+  .alt.selected .bubble{ background:var(--ink); color:var(--white); border-color:var(--ink); }
+  .alt.is-correct{ border-color:var(--green); background:var(--green-bg); }
+  .alt.is-correct .bubble{ background:var(--green); border-color:var(--green); color:var(--white); }
+  .alt.is-wrong{ border-color:var(--red); background:var(--red-bg); }
+  .alt.is-wrong .bubble{ background:var(--red); border-color:var(--red); color:var(--white); }
+  .alt:disabled, .alt.locked{ cursor:default; }
+
+  .feedback{ margin-top:16px; font-size:0.92rem; padding:12px 14px; border-radius:var(--radius); }
+  .feedback.ok{ background:var(--green-bg); color:var(--green); }
+  .feedback.bad{ background:var(--red-bg); color:var(--red); }
+  .feedback.none{ background:var(--brass-bg); color:#7a5a1f; }
+
+  .quiz-actions{ display:flex; justify-content:space-between; align-items:center; margin-top:22px; gap:10px; flex-wrap:wrap; }
+  .kbd-hint{ font-size:0.76rem; color:var(--graphite); opacity:0.55; }
+
+  /* ---------- Result view ---------- */
+  .score-hero{ text-align:center; padding:12px 0 22px; border-bottom:1px solid var(--line-soft); margin-bottom:22px; }
+  .score-num{ font-family:var(--serif); font-weight:700; font-size:3rem; color:var(--ink); line-height:1; }
+  .score-sub{ font-size:0.95rem; color:var(--graphite); margin-top:6px; }
+  .result-item{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:10px 14px; border-bottom:1px solid var(--line-soft); font-size:0.88rem;
+  }
+  .result-item .rtext{ color:var(--graphite); max-width:78%; }
+  .result-tag{ font-weight:700; }
+  .result-tag.correct{ color:var(--green); }
+  .result-tag.wrong{ color:var(--red); }
+  .result-tag.skip{ color:var(--brass); }
+
+  .footer-note{ text-align:center; font-size:0.78rem; color:var(--graphite); opacity:0.55; margin-top:26px; }
+  .sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <div>
+      <h1>Cartão-Resposta</h1>
+      <div class="tag">cole, responda, confira o gabarito</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="stamp-btn" id="btn-auth">Entrar com Google</button>
+      <button class="stamp-btn" id="btn-home" style="display:none;">Início</button>
+    </div>
+  </div>
+
+  <div class="sheet" id="app"></div>
+
+  <div class="footer-note" id="footnote"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============ CONFIG ============ */
+  // Cole aqui o Client ID gerado no Google Cloud Console (Origens JavaScript
+  // autorizadas = a URL do seu GitHub Pages, sem barra no final).
+  var CONFIG = {
+    CLIENT_ID: '1059213534313-6ju5ocufjempla0d8r8n35c7smdnljaf.apps.googleusercontent.com',
+    SCOPE: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email',
+    // Depois que o arquivo do grupo for criado uma vez (veja botão "Criar
+    // simulado do grupo"), cole o ID aqui para todo mundo usar o mesmo arquivo.
+    GROUP_FILE_ID: ''
+  };
+
+  /* ============ GOOGLE AUTH + DRIVE STORAGE ============ */
+  var tokenClient = null;
+  var accessToken = null;
+  var isSignedIn = false;
+  var userEmail = '';
+  var personalFileId = null;
+  var personalData = {};
+  var groupFileId = CONFIG.GROUP_FILE_ID || null;
+  var groupData = {};
+  var memoryStore = {}; // used only before sign-in, lost on reload
+
+  function memKey(key, shared){ return (shared ? 'shared:' : 'personal:') + key; }
+
+  function initGoogleAuth(){
+    if(typeof google === 'undefined' || !google.accounts){
+      setTimeout(initGoogleAuth, 300);
+      return;
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.CLIENT_ID,
+      scope: CONFIG.SCOPE,
+      callback: handleTokenResponse
+    });
+  }
+
+  function handleTokenResponse(resp){
+    if(resp.error){
+      alert('Não consegui entrar com o Google: ' + resp.error);
+      return;
+    }
+    accessToken = resp.access_token;
+    onSignedIn();
+  }
+
+  function signIn(){
+    if(!tokenClient){ alert('O login do Google ainda está carregando, tenta de novo em 1 segundo.'); return; }
+    tokenClient.requestAccessToken();
+  }
+
+  function signOut(){
+    if(accessToken && google.accounts && google.accounts.oauth2){
+      google.accounts.oauth2.revoke(accessToken, function(){});
+    }
+    accessToken = null;
+    isSignedIn = false;
+    userEmail = '';
+    personalFileId = null;
+    personalData = {};
+    updateAuthUI();
+    if(state.view !== 'paste') goHome(); else render();
+  }
+
+  async function onSignedIn(){
+    isSignedIn = true;
+    try{
+      var res = await driveFetch('https://www.googleapis.com/oauth2/v3/userinfo');
+      var info = await res.json();
+      userEmail = info.email || '';
+    }catch(e){ userEmail = ''; }
+    updateAuthUI();
+    try{ await loadPersonalFile(); }catch(e){ console.error(e); }
+    try{ await loadGroupFile(); }catch(e){ console.error(e); }
+    render();
+  }
+
+  function updateAuthUI(){
+    var btn = document.getElementById('btn-auth');
+    if(isSignedIn){
+      btn.textContent = (userEmail || 'Conectado') + ' · Sair';
+      btn.onclick = signOut;
+    } else {
+      btn.textContent = 'Entrar com Google';
+      btn.onclick = signIn;
+    }
+  }
+
+  async function driveFetch(url, options){
+    options = options || {};
+    options.headers = Object.assign({ 'Authorization': 'Bearer ' + accessToken }, options.headers || {});
+    var res = await fetch(url, options);
+    if(!res.ok){
+      var body = await res.text().catch(function(){ return ''; });
+      throw new Error('Drive API ' + res.status + ': ' + body.slice(0, 200));
+    }
+    return res;
+  }
+
+  async function findFileByName(name){
+    var q = encodeURIComponent("name='" + name + "' and trashed=false");
+    var res = await driveFetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id,name)&spaces=drive');
+    var data = await res.json();
+    return (data.files && data.files[0]) ? data.files[0].id : null;
+  }
+
+  async function createJsonFile(name, obj){
+    var res = await driveFetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, mimeType: 'application/json' })
+    });
+    var file = await res.json();
+    await writeJsonFile(file.id, obj);
+    return file.id;
+  }
+
+  async function writeJsonFile(fileId, obj){
+    await driveFetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(obj)
+    });
+  }
+
+  async function readJsonFile(fileId){
+    var res = await driveFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
+    return await res.json();
+  }
+
+  async function shareFileAnyoneWriter(fileId){
+    await driveFetch('https://www.googleapis.com/drive/v3/files/' + fileId + '/permissions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'writer', type: 'anyone' })
+    });
+  }
+
+  async function loadPersonalFile(){
+    var id = await findFileByName('simulado-concurso-pessoal.json');
+    if(!id){ id = await createJsonFile('simulado-concurso-pessoal.json', {}); }
+    personalFileId = id;
+    personalData = (await readJsonFile(id)) || {};
+  }
+
+  async function loadGroupFile(){
+    if(CONFIG.GROUP_FILE_ID){
+      groupFileId = CONFIG.GROUP_FILE_ID;
+      groupData = (await readJsonFile(groupFileId)) || {};
+    } else {
+      groupData = {};
+    }
+  }
+
+  // Cria o arquivo compartilhado do grupo (uma única vez, feito por quem
+  // administra o site) e já libera edição para "qualquer pessoa com o link".
+  async function ensureGroupFile(){
+    if(groupFileId) return groupFileId;
+    var id = await createJsonFile('simulado-concurso-grupo.json', {});
+    await shareFileAnyoneWriter(id);
+    groupFileId = id;
+    window.prompt(
+      'Arquivo do grupo criado! Copie este ID e envie para quem configurou o site colar em CONFIG.GROUP_FILE_ID no código-fonte, assim todo mundo passa a usar o mesmo arquivo automaticamente:',
+      id
+    );
+    return id;
+  }
+
+  async function saveKey(key, value, shared){
+    if(!isSignedIn){ memoryStore[memKey(key, shared)] = value; return; }
+    try{
+      if(shared){
+        var gid = await ensureGroupFile();
+        groupData[key] = value;
+        await writeJsonFile(gid, groupData);
+      } else {
+        personalData[key] = value;
+        await writeJsonFile(personalFileId, personalData);
+      }
+    }catch(e){
+      console.error(e);
+      alert('Não consegui salvar no Google Drive agora. Tenta de novo em alguns segundos.');
+    }
+  }
+
+  async function loadKey(key, shared){
+    if(!isSignedIn){
+      var mk = memKey(key, shared);
+      return memoryStore.hasOwnProperty(mk) ? memoryStore[mk] : null;
+    }
+    var store = shared ? groupData : personalData;
+    return store.hasOwnProperty(key) ? store[key] : null;
+  }
+
+  async function deleteKey(key, shared){
+    if(!isSignedIn){ delete memoryStore[memKey(key, shared)]; return; }
+    try{
+      if(shared){
+        delete groupData[key];
+        if(groupFileId) await writeJsonFile(groupFileId, groupData);
+      } else {
+        delete personalData[key];
+        if(personalFileId) await writeJsonFile(personalFileId, personalData);
+      }
+    }catch(e){ console.error(e); }
+  }
+
+  /* ============ PARSER ============ */
+  // Detects: "a) texto", "(A) texto", "A. texto"  -- single letter a-e only
+  var ALT_START = /^\s*\(?([a-eA-E])\)?[\)\.\-:]\s+(.*)$/;
+  // Detects a gabarito mention anywhere in a line (handles "✅ Alternativa correta: B", "Gabarito: C", etc.)
+  var GAB_ANY = /(?:gabarito|resposta(?:\s*certa|\s*correta)?|alternativa\s*correta)\s*(?:é|eh)?\s*[:\-]?\s*\(?([a-eA-E])\)?/i;
+
+  // Recognizes a new question heading in either style:
+  //  - "Questão 1", "QUESTÃO 12:", "Questão 3 - texto..." (word + number, text optional on same line)
+  //  - "1) texto", "1. texto", "12 - texto" (bare number + delimiter + text required on same line)
+  function matchQuestionStart(line){
+    var mWord = line.match(/^\s*quest[aã]o\s*n?[ºo°]?\s*(\d{1,3})\s*[:\-\)\.]?\s*(.*)$/i);
+    if(mWord) return { text: mWord[2] || "" };
+    var mNum = line.match(/^\s*(\d{1,3})\s*[\)\.\-:–]\s*(.+)$/);
+    if(mNum && mNum[2] && mNum[2].trim().length > 0) return { text: mNum[2] };
+    return null;
+  }
+
+  function parseQuestions(raw){
+    var lines = raw.replace(/\r\n/g,"\n").split("\n");
+    var questions = [];
+    var current = null;
+
+    function pushCurrent(){
+      if(current && (current.text.trim() || current.alternatives.length)){
+        current.text = current.text.trim();
+        current.alternatives.forEach(function(a){ a.text = a.text.trim(); });
+        questions.push(current);
+      }
+    }
+
+    lines.forEach(function(rawLine){
+      var line = rawLine.trim();
+      if(line === "") return;
+
+      var qm = matchQuestionStart(line);
+      if(qm){
+        pushCurrent();
+        current = { number: questions.length + 1, text: qm.text, alternatives: [], gabarito: null, locked: false };
+        return;
+      }
+      if(!current){
+        current = { number: 1, text: "", alternatives: [], gabarito: null, locked: false };
+      }
+      if(current.locked){
+        // Once the gabarito for this question was found, ignore trailing
+        // commentary/explanation lines until the next question starts.
+        return;
+      }
+
+      var am = line.match(ALT_START);
+      if(am){
+        current.alternatives.push({ letter: am[1].toUpperCase(), text: am[2] || "" });
+        return;
+      }
+
+      var gm = line.match(GAB_ANY);
+      if(gm && current.alternatives.length){
+        current.gabarito = gm[1].toUpperCase();
+        current.locked = true;
+        return;
+      }
+
+      // continuation line: append to whatever is currently open
+      if(current.alternatives.length){
+        current.alternatives[current.alternatives.length - 1].text += " " + line;
+      } else {
+        current.text += (current.text ? " " : "") + line;
+      }
+    });
+    pushCurrent();
+
+    // renumber cleanly & drop questions with fewer than 2 alternatives
+    var clean = [];
+    questions.forEach(function(q){
+      if(q.alternatives.length >= 2 && q.text.trim()){
+        q.number = clean.length + 1;
+        clean.push(q);
+      }
+    });
+    return clean;
+  }
+
+  /* ============ STATE ============ */
+  var state = {
+    view: 'paste',       // paste | review | quiz | result
+    rawText: '',
+    questions: [],
+    currentIndex: 0,
+    answers: {},          // index -> chosen letter
+    submitted: false,      // true only after "Enviar respostas" on the last question
+    savedDecks: []
+  };
+
+  var app = document.getElementById('app');
+  var homeBtn = document.getElementById('btn-home');
+  var footnote = document.getElementById('footnote');
+  homeBtn.addEventListener('click', function(){ goHome(); });
+
+  function goHome(){
+    state.view = 'paste';
+    state.rawText = '';
+    state.questions = [];
+    state.answers = {};
+    state.currentIndex = 0;
+    state.submitted = false;
+    render();
+  }
+
+  function el(tag, attrs, children){
+    var node = document.createElement(tag);
+    attrs = attrs || {};
+    Object.keys(attrs).forEach(function(k){
+      var v = attrs[k];
+      if(v === null || v === undefined || v === false) return; // skip falsy attrs entirely
+      if(k === 'class'){ node.className = v; }
+      else if(k === 'html'){ node.innerHTML = v; }
+      else if(k.indexOf('on') === 0 && typeof v === 'function'){ node.addEventListener(k.slice(2), v); }
+      else if(k === 'disabled'){ node.disabled = true; }
+      else { node.setAttribute(k, v); }
+    });
+    (children || []).forEach(function(c){
+      if(c === null || c === undefined) return;
+      if(typeof c === 'string'){ node.appendChild(document.createTextNode(c)); }
+      else { node.appendChild(c); }
+    });
+    return node;
+  }
+
+  /* ============ RENDER ROUTER ============ */
+  function render(){
+    app.innerHTML = '';
+    homeBtn.style.display = state.view === 'paste' ? 'none' : 'inline-block';
+    if(state.view === 'paste') renderPaste();
+    else if(state.view === 'review') renderReview();
+    else if(state.view === 'quiz') renderQuiz();
+    else if(state.view === 'result') renderResult();
+    updateFootnote();
+  }
+
+  function updateFootnote(){
+    if(state.view === 'quiz'){
+      footnote.textContent = 'Atalhos: teclas A–E para responder, Enter para avançar';
+    } else {
+      footnote.textContent = '';
+    }
+  }
+
+  /* ============ PASTE VIEW ============ */
+  function renderPaste(){
+    var lede = el('p', { class: 'lede' }, [
+      'Cole abaixo as questões que você recebeu da IA — pode ser 10, 30 ou 100 de uma vez. ' +
+      'O site separa cada questão e suas alternativas automaticamente, e detecta o gabarito quando ele já vem junto.'
+    ]);
+
+    var textarea = el('textarea', {
+      placeholder: '1) Qual é a capital do Brasil?\na) São Paulo\nb) Rio de Janeiro\nc) Brasília\nd) Belo Horizonte\nGabarito: C\n\n2) ...'
+    });
+    textarea.value = state.rawText;
+
+    var hint = el('p', { class: 'hint' },
+      ['Funciona com questões numeradas (1. ou 1)) e alternativas de A a E (a), A), A.). Se uma questão não tiver o gabarito indicado, você marca a resposta certa na próxima tela, antes de começar.']);
+
+    var errorBox = null;
+
+    var startBtn = el('button', { class: 'btn-primary' }, ['Formatar questões']);
+    startBtn.addEventListener('click', function(){
+      var raw = textarea.value;
+      var parsed = parseQuestions(raw);
+      if(parsed.length === 0){
+        if(errorBox) errorBox.remove();
+        errorBox = el('div', { class: 'error-box' }, [
+          'Não consegui identificar nenhuma questão nesse texto. Confirme se as questões estão numeradas (ex: "1)") e as alternativas com letras (ex: "a)"), cada item em sua própria linha.'
+        ]);
+        app.querySelector('.row').insertAdjacentElement('afterend', errorBox);
+        return;
+      }
+      state.rawText = raw;
+      state.questions = parsed;
+      state.answers = {};
+      state.currentIndex = 0;
+      state.view = 'review';
+      render();
+    });
+
+    var row = el('div', { class: 'row' }, [startBtn]);
+
+    app.appendChild(lede);
+    app.appendChild(textarea);
+    app.appendChild(hint);
+    app.appendChild(row);
+
+    // saved decks section
+    renderSavedDecksInto(app);
+  }
+
+  function renderSavedDecksInto(container){
+    var section = el('div', { style: 'margin-top:30px; border-top:1px solid var(--line-soft); padding-top:18px;' });
+    var title = el('div', { style: 'font-family:var(--serif); font-weight:600; color:var(--ink); margin-bottom:12px;' }, ['Simulados salvos']);
+    section.appendChild(title);
+
+    if(!isSignedIn){
+      section.appendChild(el('div', { class: 'hint' }, [
+        'Entre com o Google (botão no topo da página) para salvar seus simulados e acessá-los de qualquer dispositivo. Sem login, tudo é perdido ao recarregar a página.'
+      ]));
+      container.appendChild(section);
+      return;
+    }
+
+    var personalLabel = el('div', { style: 'font-size:0.82rem; font-weight:600; color:var(--ink); margin-bottom:8px;' }, ['Meus simulados']);
+    var personalList = el('div', { class: 'saved-list' });
+    section.appendChild(personalLabel);
+    section.appendChild(personalList);
+
+    var groupLabel = el('div', { style: 'font-size:0.82rem; font-weight:600; color:var(--ink); margin:20px 0 4px;' }, ['Simulados do grupo']);
+    var groupHint = el('div', { class: 'hint', style: 'margin-bottom:8px;' }, ['Visíveis para qualquer pessoa que abrir o link compartilhado deste site.']);
+    var groupList = el('div', { class: 'saved-list' });
+    section.appendChild(groupLabel);
+    section.appendChild(groupHint);
+    section.appendChild(groupList);
+
+    container.appendChild(section);
+
+    loadDeckListInto(personalList, false);
+    loadDeckListInto(groupList, true);
+  }
+
+  function loadDeckListInto(listWrap, shared){
+    loadKey('decks-index', shared).then(function(idx){
+      idx = idx || [];
+      if(idx.length === 0){
+        listWrap.appendChild(el('div', { class: 'hint' }, [
+          shared ? 'Nenhum simulado do grupo ainda.' : 'Nenhum simulado pessoal salvo ainda.'
+        ]));
+        return;
+      }
+      idx.slice().reverse().forEach(function(item){
+        var row = el('div', { class: 'saved-item' }, [
+          el('div', {}, [
+            el('div', { class: 'name' }, [item.name]),
+            el('div', { class: 'meta' }, [item.count + ' questões']),
+          ]),
+          el('div', { class: 'saved-actions' }, [
+            el('button', { class: 'link-btn', onclick: function(){ openDeck(item.id, shared); } }, ['Abrir']),
+            el('button', { class: 'link-btn danger', onclick: function(){ removeDeck(item.id, row, shared); } }, ['Excluir'])
+          ])
+        ]);
+        listWrap.appendChild(row);
+      });
+    });
+  }
+
+  function openDeck(id, shared){
+    loadKey('deck-' + id, shared).then(function(data){
+      if(!data) return;
+      state.questions = data.questions;
+      state.answers = {};
+      state.currentIndex = 0;
+      state.submitted = false;
+      state.view = 'review';
+      render();
+    });
+  }
+
+  function removeDeck(id, rowNode, shared){
+    deleteKey('deck-' + id, shared).then(function(){
+      loadKey('decks-index', shared).then(function(idx){
+        idx = (idx || []).filter(function(d){ return d.id !== id; });
+        saveKey('decks-index', idx, shared).then(function(){ rowNode.remove(); });
+      });
+    });
+  }
+
+  async function saveCurrentDeck(shared){
+    if(!isSignedIn){
+      alert('Entre com o Google primeiro (botão no topo da página) para poder salvar.');
+      return;
+    }
+    if(shared){
+      var ok = window.confirm('Isso ficará visível para qualquer pessoa que abrir o link compartilhado deste site. Continuar?');
+      if(!ok) return;
+    }
+    var name = window.prompt('Nome para este simulado' + (shared ? ' (grupo)' : '') + ':', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
+    if(!name) return;
+    var id = 'd' + Date.now();
+    await saveKey('deck-' + id, { questions: state.questions }, shared);
+    var idx = await loadKey('decks-index', shared) || [];
+    idx.push({ id: id, name: name, count: state.questions.length, createdAt: Date.now() });
+    await saveKey('decks-index', idx, shared);
+    alert(shared ? 'Simulado salvo para o grupo.' : 'Simulado salvo.');
+  }
+
+  /* ============ REVIEW VIEW ============ */
+  function renderReview(){
+    var missing = state.questions.filter(function(q){ return !q.gabarito; }).length;
+
+    var head = el('div', { class: 'lede' }, [
+      state.questions.length + ' questões identificadas' +
+      (missing ? '. ' + missing + ' sem gabarito indicado — marque a resposta certa antes de começar (opcional).' : '. Todas com gabarito detectado.')
+    ]);
+    app.appendChild(head);
+
+    var list = el('div', {});
+    state.questions.forEach(function(q, i){
+      var hasGab = !!q.gabarito;
+      var item = el('div', { class: 'review-item' + (hasGab ? '' : ' needs') });
+      var top = el('div', { class: 'review-top' }, [
+        el('span', { class: 'review-num' }, ['Questão ' + q.number]),
+        hasGab
+          ? el('span', { class: 'badge ok' }, ['Gabarito: ' + q.gabarito])
+          : el('span', { class: 'badge missing' }, ['sem gabarito'])
+      ]);
+      item.appendChild(top);
+      item.appendChild(el('div', { class: 'review-text' }, [truncate(q.text, 140)]));
+
+      if(!hasGab){
+        var picker = el('div', { class: 'letter-pick' });
+        q.alternatives.forEach(function(a){
+          var b = el('button', {
+            onclick: function(){
+              q.gabarito = a.letter;
+              render();
+            }
+          }, [a.letter]);
+          picker.appendChild(b);
+        });
+        item.appendChild(picker);
+      }
+      list.appendChild(item);
+    });
+    app.appendChild(list);
+
+    var startBtn = el('button', { class: 'btn-primary' }, ['Iniciar simulado']);
+    startBtn.addEventListener('click', function(){
+      state.view = 'quiz';
+      state.currentIndex = 0;
+      state.answers = {};
+      state.submitted = false;
+      render();
+    });
+    var editBtn = el('button', { class: 'btn-ghost' }, ['Editar texto']);
+    editBtn.addEventListener('click', function(){ state.view = 'paste'; render(); });
+    var saveBtn = el('button', { class: 'btn-ghost' }, ['Salvar (só eu)']);
+    saveBtn.addEventListener('click', function(){ saveCurrentDeck(false); });
+    var saveGroupBtn = el('button', { class: 'btn-ghost' }, ['Salvar para o grupo']);
+    saveGroupBtn.addEventListener('click', function(){ saveCurrentDeck(true); });
+
+    app.appendChild(el('div', { class: 'row' }, [startBtn, editBtn, saveBtn, saveGroupBtn]));
+  }
+
+  function truncate(str, n){
+    return str.length > n ? str.slice(0, n).trim() + '…' : str;
+  }
+
+  /* ============ QUIZ VIEW ============ */
+  function renderQuiz(){
+    var progressRow = el('div', { class: 'progress-row' });
+    state.questions.forEach(function(q, i){
+      var st = state.answers[i];
+      var cls = 'prog-dot';
+      if(i === state.currentIndex) cls += ' current';
+      if(state.submitted){
+        if(st && st.skipped) cls += ' skip';
+        else if(st && q.gabarito) cls += (st.letter === q.gabarito ? ' correct' : ' wrong');
+      } else if(st){
+        cls += (st.skipped ? ' skip' : ' answered-flag');
+      }
+      var dot = el('button', { class: cls, 'aria-label': 'Ir para questão ' + q.number }, [String(q.number)]);
+      dot.addEventListener('click', function(){ state.currentIndex = i; render(); });
+      progressRow.appendChild(dot);
+    });
+    app.appendChild(progressRow);
+
+    var q = state.questions[state.currentIndex];
+    var answered = state.answers[state.currentIndex];
+
+    var meta = el('div', { class: 'q-meta' }, [
+      el('span', { class: 'q-count' }, ['QUESTÃO ' + (state.currentIndex + 1) + ' DE ' + state.questions.length])
+    ]);
+    app.appendChild(meta);
+    app.appendChild(el('div', { class: 'q-text' }, [q.text]));
+
+    var altList = el('div', { class: 'alt-list' });
+    q.alternatives.forEach(function(a){
+      var classes = 'alt';
+      var selectedLetter = answered ? answered.letter : null;
+
+      if(state.submitted){
+        classes += ' locked';
+        if(selectedLetter === a.letter) classes += ' selected';
+        if(q.gabarito){
+          if(a.letter === q.gabarito) classes += ' is-correct';
+          else if(a.letter === selectedLetter && selectedLetter !== q.gabarito) classes += ' is-wrong';
+        }
+      } else {
+        if(selectedLetter === a.letter) classes += ' selected';
+      }
+
+      var btn = el('button', { class: classes, disabled: state.submitted }, [
+        el('span', { class: 'bubble' }, [a.letter]),
+        el('span', {}, [a.text])
+      ]);
+      if(!state.submitted){
+        btn.addEventListener('click', function(){ selectAnswer(a.letter); });
+      }
+      altList.appendChild(btn);
+    });
+    app.appendChild(altList);
+
+    if(state.submitted){
+      var fb;
+      if(!q.gabarito){
+        fb = el('div', { class: 'feedback none' }, ['Gabarito não informado para esta questão — resposta registrada como "sem gabarito".']);
+      } else if(answered && !answered.skipped && answered.letter === q.gabarito){
+        fb = el('div', { class: 'feedback ok' }, ['Certa! A resposta é a letra ' + q.gabarito + '.']);
+      } else if(answered && !answered.skipped){
+        fb = el('div', { class: 'feedback bad' }, ['Errada. Você marcou ' + answered.letter + ' — a resposta certa é a letra ' + q.gabarito + '.']);
+      } else {
+        fb = el('div', { class: 'feedback bad' }, ['Não respondida — a resposta certa é a letra ' + q.gabarito + '.']);
+      }
+      app.appendChild(fb);
+    }
+
+    var actions = el('div', { class: 'quiz-actions' });
+
+    if(state.submitted){
+      var backBtn = el('button', { class: 'btn-ghost' }, ['← Voltar ao resultado']);
+      backBtn.addEventListener('click', function(){ state.view = 'result'; render(); });
+      actions.appendChild(backBtn);
+      var navWrap = el('div', { class: 'row', style: 'margin:0;' });
+      var prevBtn2 = el('button', { class: 'btn-ghost' }, ['← Anterior']);
+      prevBtn2.disabled = state.currentIndex === 0;
+      prevBtn2.addEventListener('click', function(){ if(state.currentIndex > 0){ state.currentIndex--; render(); } });
+      var nextBtn2 = el('button', { class: 'btn-ghost' }, ['Próxima →']);
+      nextBtn2.disabled = state.currentIndex === state.questions.length - 1;
+      nextBtn2.addEventListener('click', function(){ if(state.currentIndex < state.questions.length - 1){ state.currentIndex++; render(); } });
+      navWrap.appendChild(prevBtn2); navWrap.appendChild(nextBtn2);
+      actions.appendChild(navWrap);
+      app.appendChild(actions);
+      return;
+    }
+
+    var leftBtns = el('div', { class: 'row', style: 'margin:0;' });
+
+    var skipBtn = el('button', { class: 'btn-ghost' }, ['Pular']);
+    skipBtn.addEventListener('click', function(){
+      state.answers[state.currentIndex] = { letter: null, skipped: true };
+      if(state.currentIndex < state.questions.length - 1){ state.currentIndex++; }
+      render();
+    });
+    leftBtns.appendChild(skipBtn);
+
+    var prevBtn = el('button', { class: 'btn-ghost' }, ['← Anterior']);
+    prevBtn.disabled = state.currentIndex === 0;
+    prevBtn.addEventListener('click', function(){
+      if(state.currentIndex > 0){ state.currentIndex--; render(); }
+    });
+    leftBtns.appendChild(prevBtn);
+    actions.appendChild(leftBtns);
+
+    var isLast = state.currentIndex === state.questions.length - 1;
+    var nextBtn = el('button', { class: 'btn-primary' }, [isLast ? 'Enviar respostas' : 'Próxima →']);
+    nextBtn.disabled = !answered;
+    nextBtn.addEventListener('click', function(){
+      if(isLast){ submitQuiz(); }
+      else { state.currentIndex++; render(); }
+    });
+    actions.appendChild(nextBtn);
+
+    app.appendChild(actions);
+  }
+
+  function selectAnswer(letter){
+    state.answers[state.currentIndex] = { letter: letter, skipped: false };
+    render();
+  }
+
+  function submitQuiz(){
+    state.submitted = true;
+    state.view = 'result';
+    state.currentIndex = 0;
+    render();
+  }
+
+  document.addEventListener('keydown', function(e){
+    if(state.view !== 'quiz' || state.submitted) return;
+    var key = e.key.toUpperCase();
+    var q = state.questions[state.currentIndex];
+    if(['A','B','C','D','E'].indexOf(key) !== -1){
+      var exists = q.alternatives.some(function(a){ return a.letter === key; });
+      if(exists) selectAnswer(key);
+    } else if(e.key === 'Enter'){
+      var isLast = state.currentIndex === state.questions.length - 1;
+      if(isLast){ submitQuiz(); }
+      else if(state.answers[state.currentIndex]){ state.currentIndex++; render(); }
+    }
+  });
+
+  /* ============ RESULT VIEW ============ */
+  function renderResult(){
+    var total = state.questions.length;
+    var correct = 0, wrong = 0, skipped = 0, noGab = 0;
+    state.questions.forEach(function(q, i){
+      var a = state.answers[i];
+      if(!a || a.skipped){ skipped++; return; }
+      if(!q.gabarito){ noGab++; return; }
+      if(a.letter === q.gabarito) correct++; else wrong++;
+    });
+    var scored = correct + wrong;
+    var pct = scored ? Math.round((correct / scored) * 100) : 0;
+
+    var hero = el('div', { class: 'score-hero' }, [
+      el('div', { class: 'score-num' }, [correct + ' / ' + scored]),
+      el('div', { class: 'score-sub' }, [
+        pct + '% de acerto' +
+        (skipped ? ' · ' + skipped + ' puladas' : '') +
+        (noGab ? ' · ' + noGab + ' sem gabarito' : '')
+      ])
+    ]);
+    app.appendChild(hero);
+
+    state.questions.forEach(function(q, i){
+      var a = state.answers[i];
+      var tag, tagClass;
+      if(!a || a.skipped){ tag = 'pulada'; tagClass = 'skip'; }
+      else if(!q.gabarito){ tag = 'sem gabarito'; tagClass = 'skip'; }
+      else if(a.letter === q.gabarito){ tag = 'certa'; tagClass = 'correct'; }
+      else { tag = 'errada (' + a.letter + ' → ' + q.gabarito + ')'; tagClass = 'wrong'; }
+
+      var row = el('div', { class: 'result-item' }, [
+        el('span', { class: 'rtext' }, [q.number + '. ' + truncate(q.text, 70)]),
+        el('span', { class: 'result-tag ' + tagClass }, [tag])
+      ]);
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', function(){
+        state.view = 'quiz';
+        state.currentIndex = i;
+        render();
+      });
+      app.appendChild(row);
+    });
+
+    var retryBtn = el('button', { class: 'btn-primary' }, ['Refazer este simulado']);
+    retryBtn.addEventListener('click', function(){
+      state.answers = {};
+      state.currentIndex = 0;
+      state.submitted = false;
+      state.view = 'quiz';
+      render();
+    });
+    var newBtn = el('button', { class: 'btn-ghost' }, ['Novo simulado']);
+    newBtn.addEventListener('click', goHome);
+
+    app.appendChild(el('div', { class: 'row' }, [retryBtn, newBtn]));
+  }
+
+  updateAuthUI();
+  initGoogleAuth();
+  render();
+})();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartão-Resposta — Simulado</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --paper:#EFEBE2;
