@@ -227,13 +227,111 @@
   var CONFIG = {
     CLIENT_ID: '1059213534313-6ju5ocufjempla0d8r8n35c7smdnljaf.apps.googleusercontent.com',
     SCOPE: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email',
-    // Depois que o arquivo do grupo for criado uma vez (veja botão "Criar
-    // simulado do grupo"), cole o ID aqui para todo mundo usar o mesmo arquivo.
+    // Depois que o arquivo do grupo for criado uma vez, cole o ID aqui para
+    // todo mundo usar o mesmo arquivo.
     GROUP_FILE_ID: '1cWFMvuXs5FAaoVjTq0hDESvSEkje8j98',
     // Depois que a primeira sala for criada, o app mostra um ID para você
     // colar aqui — assim todo mundo passa a entrar pelas mesmas salas.
-    ROOMS_INDEX_FILE_ID: ''
+    ROOMS_INDEX_FILE_ID: '',
+    // Banco de questões único e global do Simulado Diário, compartilhado por
+    // todo mundo que usa o site.
+    DAILY_FILE_ID: ''
   };
+
+  /* ============ SIMULADO DIÁRIO (banco global, sem reset, todo mundo soma questões) ============ */
+  var dailyFileId = CONFIG.DAILY_FILE_ID || null;
+  var dailyData = { questions: [] };
+
+  async function loadDailyFile(){
+    if(CONFIG.DAILY_FILE_ID){
+      dailyFileId = CONFIG.DAILY_FILE_ID;
+      dailyData = (await readJsonFile(dailyFileId)) || { questions: [] };
+      return;
+    }
+    var found = await findFileByName('simulado-concurso-diario.json');
+    if(found){
+      dailyFileId = found;
+      dailyData = (await readJsonFile(found)) || { questions: [] };
+    } else {
+      dailyData = { questions: [] };
+    }
+  }
+
+  async function ensureDailyFile(){
+    if(dailyFileId) return dailyFileId;
+    var id = await createJsonFile('simulado-concurso-diario.json', { questions: [] });
+    await shareFileAnyoneWriter(id);
+    dailyFileId = id;
+    window.prompt(
+      'Simulado Diário criado! Copie este ID e envie para configurar CONFIG.DAILY_FILE_ID no código, assim todo mundo passa a usar o mesmo banco automaticamente:',
+      id
+    );
+    return id;
+  }
+
+  async function addQuestionsToDaily(newQuestions){
+    var id = await ensureDailyFile();
+    // recarrega antes de anexar, para não perder perguntas que outra pessoa
+    // tenha adicionado nesse meio-tempo
+    try{ dailyData = (await readJsonFile(id)) || { questions: [] }; }catch(e){ /* segue com o que já tem em memória */ }
+    var startNumber = dailyData.questions.length;
+    var tagged = newQuestions.map(function(q, i){
+      return {
+        number: startNumber + i + 1,
+        text: q.text,
+        alternatives: q.alternatives,
+        gabarito: q.gabarito,
+        addedBy: userEmail || 'anônimo',
+        addedAt: Date.now()
+      };
+    });
+    dailyData.questions = dailyData.questions.concat(tagged);
+    try{ await writeJsonFile(id, dailyData); }
+    catch(e){ console.error(e); alert('Não consegui salvar no Simulado Diário agora. Tenta de novo em alguns segundos.'); return false; }
+    return true;
+  }
+
+  function openDailyQuiz(){
+    if(dailyData.questions.length === 0){
+      alert('O Simulado Diário ainda não tem nenhuma questão. Adicione a primeira!');
+      return;
+    }
+    state.questions = JSON.parse(JSON.stringify(dailyData.questions));
+    state.answers = {};
+    state.currentIndex = 0;
+    state.submitted = false;
+    state.pasteTarget = null;
+    state.view = 'review';
+    render();
+  }
+
+  function renderDailySectionInto(container){
+    if(!isSignedIn) return;
+    var section = el('div', { style: 'margin-top:30px; border-top:1px solid var(--line-soft); padding-top:18px;' });
+    section.appendChild(el('div', { style: 'font-family:var(--serif); font-weight:600; color:var(--ink); margin-bottom:8px;' }, ['Simulado Diário']));
+    section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
+      'Um banco de questões só, compartilhado por todo mundo que usa o site. Qualquer pessoa pode somar questões novas, e todo mundo responde o mesmo conjunto, sem reset.'
+    ]));
+    section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
+      dailyData.questions.length + (dailyData.questions.length === 1 ? ' questão acumulada' : ' questões acumuladas')
+    ]));
+
+    var row = el('div', { class: 'row', style: 'margin-top:0;' });
+    var answerBtn = el('button', { class: 'btn-primary' }, ['Responder simulado diário']);
+    answerBtn.addEventListener('click', openDailyQuiz);
+    var addBtn = el('button', { class: 'btn-ghost' }, ['+ Adicionar questão(ões)']);
+    addBtn.addEventListener('click', function(){
+      state.pasteTarget = { type: 'daily' };
+      state.rawText = '';
+      state.view = 'paste';
+      render();
+    });
+    row.appendChild(answerBtn);
+    row.appendChild(addBtn);
+    section.appendChild(row);
+
+    container.appendChild(section);
+  }
 
   /* ============ SALAS (rooms) ============ */
   var DEFAULT_DISCIPLINAS = [
@@ -261,6 +359,13 @@
     if(CONFIG.ROOMS_INDEX_FILE_ID){
       roomsIndexFileId = CONFIG.ROOMS_INDEX_FILE_ID;
       roomsIndexData = (await readJsonFile(roomsIndexFileId)) || {};
+      return;
+    }
+    // Sem ID fixo ainda: tenta achar um índice já criado por esta mesma conta.
+    var found = await findFileByName('simulado-concurso-salas-index.json');
+    if(found){
+      roomsIndexFileId = found;
+      roomsIndexData = (await readJsonFile(found)) || {};
     } else {
       roomsIndexData = {};
     }
@@ -304,7 +409,7 @@
   async function joinRoomByCode(rawCode){
     var code = (rawCode || '').trim().toUpperCase();
     if(!code) return null;
-    if(!roomsIndexFileId && CONFIG.ROOMS_INDEX_FILE_ID){ await loadRoomsIndex(); }
+    if(!roomsIndexFileId){ await loadRoomsIndex(); }
     var entry = roomsIndexData[code];
     if(!entry){
       alert('Código não encontrado. Confira com quem te passou o código e tente de novo.');
@@ -415,6 +520,7 @@
     try{ await loadPersonalFile(); }catch(e){ console.error(e); }
     try{ await loadGroupFile(); }catch(e){ console.error(e); }
     try{ await loadRoomsIndex(); }catch(e){ console.error(e); }
+    try{ await loadDailyFile(); }catch(e){ console.error(e); }
     render();
   }
 
@@ -704,7 +810,7 @@
 
   /* ============ PASTE VIEW ============ */
   function renderPaste(){
-    if(state.pasteTarget && state.room){
+    if(state.pasteTarget && state.pasteTarget.type === 'room' && state.room){
       var disc = state.room.data.disciplinas.find(function(d){ return d.id === state.pasteTarget.disciplinaId; });
       var banner = el('div', { class: 'feedback none' }, [
         'Adicionando simulado para a disciplina "' + (disc ? disc.name : '') + '" na sala "' + state.room.data.name + '". '
@@ -718,6 +824,17 @@
       });
       banner.appendChild(cancelLink);
       app.appendChild(banner);
+    } else if(state.pasteTarget && state.pasteTarget.type === 'daily'){
+      var dailyBanner = el('div', { class: 'feedback none' }, [
+        'Adicionando questão(ões) ao Simulado Diário — vai ficar disponível para todo mundo do site. '
+      ]);
+      var cancelLink2 = el('button', { class: 'link-btn' }, ['Cancelar']);
+      cancelLink2.addEventListener('click', function(){
+        state.pasteTarget = null;
+        render();
+      });
+      dailyBanner.appendChild(cancelLink2);
+      app.appendChild(dailyBanner);
     }
 
     var lede = el('p', { class: 'lede' }, [
@@ -762,6 +879,9 @@
     app.appendChild(hint);
     app.appendChild(row);
 
+    // simulado diário (banco global, só quando logado)
+    renderDailySectionInto(app);
+
     // salas de estudo (só quando logado)
     renderRoomsSectionInto(app);
 
@@ -801,6 +921,17 @@
     joinRow.appendChild(joinBtn);
     joinRow.appendChild(createBtn);
     section.appendChild(joinRow);
+
+    if(!CONFIG.ROOMS_INDEX_FILE_ID){
+      var idHint = el('div', { class: 'hint', style: 'margin-top:8px;' }, [
+        'Ainda sem ID fixo configurado para o índice de salas — só esta conta consegue criar/achar salas por enquanto. ',
+        el('button', { class: 'link-btn', onclick: async function(){
+          var id = await ensureRoomsIndexFile();
+          window.prompt('ID do índice de salas (envie para configurar CONFIG.ROOMS_INDEX_FILE_ID):', id);
+        } }, ['Ver/criar ID do índice'])
+      ]);
+      section.appendChild(idHint);
+    }
 
     var myRoomsList = el('div', { class: 'saved-list', style: 'margin-top:14px;' });
     section.appendChild(myRoomsList);
@@ -935,7 +1066,7 @@
 
     var addBtn = el('button', { class: 'btn-primary' }, ['+ Novo simulado']);
     addBtn.addEventListener('click', function(){
-      state.pasteTarget = { roomCode: room.code, disciplinaId: disc.id };
+      state.pasteTarget = { type: 'room', roomCode: room.code, disciplinaId: disc.id };
       state.rawText = '';
       state.view = 'paste';
       render();
@@ -1113,10 +1244,22 @@
     saveGroupBtn.addEventListener('click', function(){ saveCurrentDeck(true); });
 
     var buttons = [startBtn, editBtn, saveBtn, saveGroupBtn];
-    if(state.pasteTarget && state.room){
+    if(state.pasteTarget && state.pasteTarget.type === 'room' && state.room){
       var saveRoomBtn = el('button', { class: 'btn-primary' }, ['Salvar nesta disciplina']);
       saveRoomBtn.addEventListener('click', saveDeckToRoom);
       buttons.push(saveRoomBtn);
+    } else if(state.pasteTarget && state.pasteTarget.type === 'daily'){
+      var saveDailyBtn = el('button', { class: 'btn-primary' }, ['Adicionar ao Simulado Diário']);
+      saveDailyBtn.addEventListener('click', async function(){
+        var ok = await addQuestionsToDaily(state.questions);
+        if(ok){
+          alert('Questões adicionadas ao Simulado Diário!');
+          state.pasteTarget = null;
+          state.view = 'paste';
+          render();
+        }
+      });
+      buttons.push(saveDailyBtn);
     }
 
     app.appendChild(el('div', { class: 'row' }, buttons));
