@@ -660,14 +660,52 @@
   // Detects a gabarito mention anywhere in a line (handles "✅ Alternativa correta: B", "Gabarito: C", etc.)
   var GAB_ANY = /(?:gabarito|resposta(?:\s*certa|\s*correta)?|alternativa\s*correta)\s*(?:é|eh)?\s*[:\-]?\s*\(?([a-eA-E])\)?/i;
 
+  // Strips Markdown decoration (##/### headings, leading -/*/• bullets, **bold**)
+  // so questions copied from ChatGPT/Claude-style Markdown answer sheets
+  // ("### **Questão 1**", "* A) texto", "**✅ Gabarito: B**") are recognized
+  // the same way as plain-text exam dumps ("1) texto", "a) texto").
+  function normalizeLine(line){
+    var s = line;
+    s = s.replace(/^#{1,6}\s*/, '');   // "### Questão 1" -> "Questão 1"
+    s = s.replace(/^[\-*•]\s+/, '');   // "* A) texto" -> "A) texto"
+    s = s.replace(/\*\*/g, '');        // "**Gabarito: B**" -> "Gabarito: B"
+    return s.trim();
+  }
+
+  // Recognizes lines that are page furniture, not real question content:
+  // running headers/footers, lone page numbers, horizontal rules ("---"),
+  // ALL-CAPS section titles ("GEOGRAFIA DO MARANHÃO"), and short bylines
+  // ("Sérgio Henrique"). These commonly sit between questions in text
+  // copy-pasted straight from a PDF and would otherwise get glued onto
+  // whatever alternative/question was open.
+  function isNoiseLine(line){
+    if(line === '') return true;
+    if(/^[-=_*]{3,}$/.test(line)) return true;
+    if(/^\d{1,4}$/.test(line)) return true;
+    if(/^\(.+?\)\s*[-–—]\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s*$/.test(line)) return true;
+    if(/^simulado\s+especial\b/i.test(line)) return true;
+    if(line.length <= 45 && /[A-ZÀ-Ý]/.test(line) && !/[a-zà-ÿ]/.test(line)) return true;
+    if(/^[A-ZÀ-Ý][a-zà-ÿ]+(\s[A-ZÀ-Ý][a-zà-ÿ]+){0,2}$/.test(line) && line.length <= 30) return true;
+    return false;
+  }
+
   // Recognizes a new question heading in either style:
   //  - "Questão 1", "QUESTÃO 12:", "Questão 3 - texto..." (word + number, text optional on same line)
-  //  - "1) texto", "1. texto", "12 - texto" (bare number + delimiter + text required on same line)
-  function matchQuestionStart(line){
+  //  - "1) texto", "1. texto", "12 - texto" (bare number + delimiter, text same line or optional)
+  // expectedNext is the question number we'd expect next (questions found so far + 1).
+  // It's only used to accept a bare "1)" with NO text on the same line — guarding
+  // against a stray numbered sub-item inside a question body being mistaken for
+  // a new question. When text follows the number on the same line, that's a much
+  // stronger signal, so it's always accepted regardless of sequence.
+  function matchQuestionStart(line, expectedNext){
     var mWord = line.match(/^\s*quest[aã]o\s*n?[ºo°]?\s*(\d{1,3})\s*[:\-\)\.]?\s*(.*)$/i);
     if(mWord) return { text: mWord[2] || "" };
-    var mNum = line.match(/^\s*(\d{1,3})\s*[\)\.\-:–]\s*(.+)$/);
-    if(mNum && mNum[2] && mNum[2].trim().length > 0) return { text: mNum[2] };
+    var mNum = line.match(/^\s*(\d{1,3})\s*[\)\.\-:–]\s*(.*)$/);
+    if(mNum){
+      var text = mNum[2] || "";
+      if(text.trim().length > 0) return { text: text };
+      if(parseInt(mNum[1], 10) === expectedNext) return { text: "" };
+    }
     return null;
   }
 
@@ -685,15 +723,19 @@
     }
 
     lines.forEach(function(rawLine){
-      var line = rawLine.trim();
+      var line = normalizeLine(rawLine.trim());
       if(line === "") return;
 
-      var qm = matchQuestionStart(line);
+      var expectedNext = questions.length + (current ? 2 : 1);
+      var qm = matchQuestionStart(line, expectedNext);
       if(qm){
         pushCurrent();
         current = { number: questions.length + 1, text: qm.text, alternatives: [], gabarito: null, locked: false };
         return;
       }
+
+      if(isNoiseLine(line)) return;
+
       if(!current){
         current = { number: 1, text: "", alternatives: [], gabarito: null, locked: false };
       }
@@ -848,7 +890,7 @@
     textarea.value = state.rawText;
 
     var hint = el('p', { class: 'hint' },
-      ['Funciona com questões numeradas (1. ou 1)) e alternativas de A a E (a), A), A.). Se uma questão não tiver o gabarito indicado, você marca a resposta certa na próxima tela, antes de começar.']);
+      ['Funciona com questões numeradas (1. ou 1)) e alternativas de A a E (a), A), A.) — inclusive coladas em Markdown (### Questão 1, * A) texto, **Gabarito: B**). Se uma questão não tiver o gabarito indicado, você marca a resposta certa na próxima tela, antes de começar.']);
 
     var errorBox = null;
 
@@ -1205,7 +1247,7 @@
       var top = el('div', { class: 'review-top' }, [
         el('span', { class: 'review-num' }, ['Questão ' + q.number]),
         hasGab
-          ? el('span', { class: 'badge ok' }, ['Gabarito: ' + q.gabarito])
+          ? el('span', { class: 'badge ok' }, ['Gabarito detectado'])
           : el('span', { class: 'badge missing' }, ['sem gabarito'])
       ]);
       item.appendChild(top);
