@@ -205,6 +205,11 @@
   .feedback.ok{ background:var(--green-bg); color:var(--green); }
   .feedback.bad{ background:var(--red-bg); color:var(--red); }
   .feedback.none{ background:var(--brass-bg); color:#7a5a1f; }
+  .comment-box{
+    margin-top:12px; font-size:0.9rem; line-height:1.55; padding:14px 16px; border-radius:var(--radius);
+    background:var(--paper-dark); color:var(--ink); border:1px solid var(--line-soft); font-family:var(--serif);
+  }
+  .comment-label{ font-family:var(--sans); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.65; margin-bottom:6px; }
 
   .quiz-actions{ display:flex; justify-content:space-between; align-items:center; margin-top:22px; gap:10px; flex-wrap:wrap; }
   .kbd-hint{ font-size:0.76rem; color:var(--graphite); opacity:0.55; }
@@ -255,26 +260,42 @@
   // autorizadas = a URL do seu GitHub Pages, sem barra no final).
   var CONFIG = {
     CLIENT_ID: '1059213534313-6ju5ocufjempla0d8r8n35c7smdnljaf.apps.googleusercontent.com',
-    SCOPE: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email',
+    SCOPE: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
     // Depois que o arquivo do grupo for criado uma vez, cole o ID aqui para
     // todo mundo usar o mesmo arquivo.
     GROUP_FILE_ID: '1cWFMvuXs5FAaoVjTq0hDESvSEkje8j98',
     // Depois que a primeira sala for criada, o app mostra um ID para você
     // colar aqui — assim todo mundo passa a entrar pelas mesmas salas.
     ROOMS_INDEX_FILE_ID: '',
-    // Banco de questões único e global do Simulado Diário, compartilhado por
-    // todo mundo que usa o site.
-    DAILY_FILE_ID: ''
+    // E-mail da conta Google do desenvolvedor (a sua). Só essa conta tem
+    // permissão de criar o arquivo do Simulado Diário de cada dia — assim
+    // ele sempre fica salvo na SUA conta, nunca na de um usuário qualquer.
+    // Preencha com o e-mail exato da conta que você usa para entrar no app.
+    DEV_EMAIL: '',
+    // Arquivo-índice pequeno que só guarda "qual é o dia de hoje e qual o
+    // ID do arquivo de questões de hoje". Criado uma única vez (por você) —
+    // depois disso, todo mundo usa esse mesmo índice para achar o arquivo
+    // do dia. Cole aqui o ID que o app mostrar na primeira vez que você,
+    // logado com o e-mail acima, adicionar uma questão ao Diário.
+    DAILY_INDEX_FILE_ID: ''
   };
 
   /* ============ SIMULADO DIÁRIO ============ */
-  // O banco de questões do dia é compartilhado (arquivo global no Drive).
-  // Ele "vira o dia" às 5h da manhã: a partir desse horário, quem abrir o
-  // site já encontra o pool zerado para o novo dia. O resultado de cada
-  // pessoa no dia anterior fica guardado no arquivo PESSOAL dela (não no
-  // arquivo global), com data, total de questões, nota e o detalhe de
-  // quais acertou/errou — assim cada um só vê o próprio histórico.
-  var dailyFileId = CONFIG.DAILY_FILE_ID || null;
+  // Cada dia tem seu PRÓPRIO arquivo de questões no Drive (ex:
+  // "simulado-diario-2026-09-13.json"), criado sempre pela conta do
+  // desenvolvedor (CONFIG.DEV_EMAIL) — nunca pela conta de um usuário
+  // qualquer. Um arquivo pequeno e fixo, o "índice", só guarda qual é o
+  // dia de hoje e o ID do arquivo de hoje; todo mundo lê esse índice pra
+  // saber qual arquivo abrir. O dia "vira" às 5h da manhã (ver
+  // DAILY_CUTOFF_HOUR); a virada só acontece de fato quando VOCÊ (o
+  // desenvolvedor) abrir o app depois desse horário — como é um site
+  // estático, sem servidor rodando sozinho de madrugada, é isso que
+  // dispara a criação do arquivo novo. O resultado de cada pessoa fica
+  // guardado no arquivo PESSOAL dela (não no arquivo do dia), com data,
+  // total de questões, nota e o detalhe de quais acertou/errou.
+  var dailyIndexFileId = CONFIG.DAILY_INDEX_FILE_ID || null;
+  var dailyIndexData = { day: null, fileId: null };
+  var dailyFileId = null;
   var dailyData = { day: null, questions: [] };
   var DAILY_CUTOFF_HOUR = 5;
 
@@ -291,56 +312,77 @@
     var parts = (key || '').split('-');
     return parts.length === 3 ? (parts[2] + '/' + parts[1] + '/' + parts[0]) : (key || '');
   }
+  function isDeveloperAccount(){
+    return !!CONFIG.DEV_EMAIL && !!userEmail && userEmail.toLowerCase() === CONFIG.DEV_EMAIL.toLowerCase();
+  }
 
-  // Zera o pool em memória se o dia mudou. Não apaga nada de ninguém: o
-  // histórico de cada pessoa já foi salvo por ela mesma, individualmente,
-  // no momento em que respondeu (ver saveDailyResult). Retorna true se
-  // resetou (útil pra saber se precisa regravar o arquivo compartilhado).
-  async function ensureFreshDailyPool(){
+  async function loadDailyIndex(){
+    if(CONFIG.DAILY_INDEX_FILE_ID){
+      dailyIndexFileId = CONFIG.DAILY_INDEX_FILE_ID;
+    } else if(!dailyIndexFileId){
+      dailyIndexFileId = await findFileByName('simulado-diario-index.json');
+    }
+    if(dailyIndexFileId){
+      try{ dailyIndexData = (await readJsonFile(dailyIndexFileId)) || { day: null, fileId: null }; }
+      catch(e){ console.error(e); dailyIndexData = { day: null, fileId: null }; }
+    } else {
+      dailyIndexData = { day: null, fileId: null };
+    }
+  }
+
+  // Garante que dailyFileId/dailyData apontem para o arquivo de HOJE.
+  // Se o índice ainda aponta pro dia certo, só usa o que já existe. Se o
+  // dia virou (ou nunca foi criado), só a conta do desenvolvedor tem
+  // permissão de criar o arquivo novo e atualizar o índice — qualquer
+  // outra pessoa só espera até o desenvolvedor abrir o app.
+  async function ensureTodaysDailyFile(){
+    await loadDailyIndex();
     var today = todayDailyKey();
-    if(dailyData.day === today) return false;
+
+    if(dailyIndexData.day === today && dailyIndexData.fileId){
+      dailyFileId = dailyIndexData.fileId;
+      try{ dailyData = (await readJsonFile(dailyFileId)) || { day: today, questions: [] }; }
+      catch(e){ console.error(e); dailyData = { day: today, questions: [] }; }
+      return;
+    }
+
+    if(!isDeveloperAccount()){
+      // Dia sem arquivo criado ainda, e quem está logado não é o
+      // desenvolvedor — não cria nada, só fica "aguardando".
+      dailyFileId = null;
+      dailyData = { day: today, questions: [] };
+      return;
+    }
+
+    // A partir daqui, só roda com a conta do desenvolvedor.
+    var newId = await createJsonFile('simulado-diario-' + today + '.json', { day: today, questions: [] });
+    await shareFileAnyoneWriter(newId);
+    dailyFileId = newId;
     dailyData = { day: today, questions: [] };
-    if(dailyFileId){
-      try{ await writeJsonFile(dailyFileId, dailyData); }
+
+    if(!dailyIndexFileId){
+      dailyIndexFileId = await createJsonFile('simulado-diario-index.json', { day: today, fileId: newId });
+      await shareFileAnyoneWriter(dailyIndexFileId);
+      window.prompt(
+        'Índice do Simulado Diário criado! Copie este ID e cole em CONFIG.DAILY_INDEX_FILE_ID no código — assim todo mundo passa a achar o arquivo do dia automaticamente:',
+        dailyIndexFileId
+      );
+    } else {
+      dailyIndexData = { day: today, fileId: newId };
+      try{ await writeJsonFile(dailyIndexFileId, dailyIndexData); }
       catch(e){ console.error(e); }
     }
-    return true;
-  }
-
-  async function loadDailyFile(){
-    if(CONFIG.DAILY_FILE_ID){
-      dailyFileId = CONFIG.DAILY_FILE_ID;
-      dailyData = (await readJsonFile(dailyFileId)) || { day: null, questions: [] };
-    } else {
-      var found = await findFileByName('simulado-concurso-diario.json');
-      if(found){
-        dailyFileId = found;
-        dailyData = (await readJsonFile(found)) || { day: null, questions: [] };
-      } else {
-        dailyData = { day: null, questions: [] };
-      }
-    }
-    await ensureFreshDailyPool();
-  }
-
-  async function ensureDailyFile(){
-    if(dailyFileId) return dailyFileId;
-    var id = await createJsonFile('simulado-concurso-diario.json', { day: todayDailyKey(), questions: [] });
-    await shareFileAnyoneWriter(id);
-    dailyFileId = id;
-    window.prompt(
-      'Simulado Diário criado! Copie este ID e envie para configurar CONFIG.DAILY_FILE_ID no código, assim todo mundo passa a usar o mesmo banco automaticamente:',
-      id
-    );
-    return id;
   }
 
   async function addQuestionsToDaily(newQuestions){
-    var id = await ensureDailyFile();
+    await ensureTodaysDailyFile();
+    if(!dailyFileId){
+      alert('O Simulado Diário de hoje ainda não foi criado. Peça para o administrador do site abrir o app primeiro.');
+      return false;
+    }
     // recarrega antes de anexar, para não perder perguntas que outra pessoa
     // tenha adicionado nesse meio-tempo
-    try{ dailyData = (await readJsonFile(id)) || { day: todayDailyKey(), questions: [] }; }catch(e){ /* segue com o que já tem em memória */ }
-    await ensureFreshDailyPool(); // por garantia, caso o dia tenha virado desde a última leitura
+    try{ dailyData = (await readJsonFile(dailyFileId)) || dailyData; }catch(e){ /* segue com o que já tem em memória */ }
     var startNumber = dailyData.questions.length;
     var tagged = newQuestions.map(function(q, i){
       return {
@@ -348,12 +390,13 @@
         text: q.text,
         alternatives: q.alternatives,
         gabarito: q.gabarito,
-        addedBy: userEmail || 'anônimo',
-        addedAt: Date.now()
+        gabaritoComentado: q.gabaritoComentado || '',
+        addedBy: q.addedBy || authorLabel(),
+        addedAt: q.addedAt || Date.now()
       };
     });
     dailyData.questions = dailyData.questions.concat(tagged);
-    try{ await writeJsonFile(id, dailyData); }
+    try{ await writeJsonFile(dailyFileId, dailyData); }
     catch(e){ console.error(e); alert('Não consegui salvar no Simulado Diário agora. Tenta de novo em alguns segundos.'); return false; }
     return true;
   }
@@ -361,13 +404,14 @@
   async function openDailyQuiz(){
     // busca a versão mais recente antes de abrir, pra não responder um
     // pool que já virou (ex: aba aberta desde antes das 5h)
-    if(dailyFileId){
-      try{ dailyData = (await readJsonFile(dailyFileId)) || dailyData; }catch(e){ /* segue com o que já tem em memória */ }
-    }
-    var rolled = await ensureFreshDailyPool();
-    if(rolled) render(); // atualiza a contagem exibida se o dia acabou de virar
-    if(dailyData.questions.length === 0){
-      alert('O Simulado Diário de hoje ainda não tem nenhuma questão. Adicione a primeira!');
+    await ensureTodaysDailyFile();
+    render(); // atualiza a contagem/estado exibidos caso algo tenha mudado
+    if(!dailyFileId || dailyData.questions.length === 0){
+      alert(
+        !dailyFileId
+          ? 'O Simulado Diário de hoje ainda não foi criado. Peça para o administrador do site abrir o app primeiro.'
+          : 'O Simulado Diário de hoje ainda não tem nenhuma questão. Adicione a primeira!'
+      );
       return;
     }
     state.questions = JSON.parse(JSON.stringify(dailyData.questions));
@@ -400,6 +444,7 @@
         text: q.text,
         alternatives: q.alternatives,
         gabarito: q.gabarito,
+        gabaritoComentado: q.gabaritoComentado || '',
         chosen: chosen,
         correct: isCorrect
       };
@@ -427,10 +472,16 @@
       'Um banco de questões compartilhado por todo mundo que usa o site. Qualquer pessoa pode somar questões novas, e todo mundo responde o mesmo conjunto — o pool reseta sozinho toda madrugada, às 5h.'
     ]));
     var dayLabel = dailyData.day ? formatDayLabel(dailyData.day) : '';
-    section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
-      dailyData.questions.length + (dailyData.questions.length === 1 ? ' questão acumulada' : ' questões acumuladas') +
-      (dayLabel ? ' hoje (' + dayLabel + ')' : '')
-    ]));
+    if(!dailyFileId){
+      section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
+        'O simulado de hoje' + (dayLabel ? ' (' + dayLabel + ')' : '') + ' ainda não foi criado. Assim que o administrador do site abrir o app, ele fica disponível aqui.'
+      ]));
+    } else {
+      section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
+        dailyData.questions.length + (dailyData.questions.length === 1 ? ' questão acumulada' : ' questões acumuladas') +
+        (dayLabel ? ' hoje (' + dayLabel + ')' : '')
+      ]));
+    }
 
     var row = el('div', { class: 'row', style: 'margin-top:0;' });
     var answerBtn = el('button', { class: 'btn-primary' }, ['Responder simulado diário']);
@@ -510,6 +561,12 @@
         el('span', { class: 'rtext' }, [q.number + '. ' + truncate(q.text, 70)]),
         el('span', { class: 'result-tag ' + tagClass }, [tag])
       ]));
+      if(q.gabaritoComentado){
+        app.appendChild(el('div', { class: 'comment-box', style: 'margin-top:-6px; margin-bottom:12px;' }, [
+          el('div', { class: 'comment-label' }, ['Gabarito comentado']),
+          q.gabaritoComentado
+        ]));
+      }
     });
 
     var backBtn = el('button', { class: 'btn-ghost' }, ['← Voltar']);
@@ -626,6 +683,8 @@
   var accessToken = null;
   var isSignedIn = false;
   var userEmail = '';
+  var userName = '';
+  function authorLabel(){ return userName || userEmail || 'anônimo'; }
   var personalFileId = null;
   var personalData = {};
   var groupFileId = CONFIG.GROUP_FILE_ID || null;
@@ -687,6 +746,7 @@
     accessToken = null;
     isSignedIn = false;
     userEmail = '';
+    userName = '';
     personalFileId = null;
     personalData = {};
     updateAuthUI();
@@ -699,19 +759,20 @@
       var res = await driveFetch('https://www.googleapis.com/oauth2/v3/userinfo');
       var info = await res.json();
       userEmail = info.email || '';
-    }catch(e){ userEmail = ''; }
+      userName = info.name || info.given_name || '';
+    }catch(e){ userEmail = ''; userName = ''; }
     updateAuthUI();
     try{ await loadPersonalFile(); }catch(e){ console.error(e); }
     try{ await loadGroupFile(); }catch(e){ console.error(e); }
     try{ await loadRoomsIndex(); }catch(e){ console.error(e); }
-    try{ await loadDailyFile(); }catch(e){ console.error(e); }
+    try{ await ensureTodaysDailyFile(); }catch(e){ console.error(e); }
     render();
   }
 
   function updateAuthUI(){
     var btn = document.getElementById('btn-auth');
     if(isSignedIn){
-      btn.textContent = (userEmail || 'Conectado') + ' · Sair';
+      btn.textContent = (userName || userEmail || 'Conectado') + ' · Sair';
       btn.onclick = signOut;
     } else {
       btn.textContent = 'Entrar com Google';
@@ -843,6 +904,10 @@
   var ALT_START = /^\s*\(?([a-eA-E])\)?[\)\.\-:]\s+(.*)$/;
   // Detects a gabarito mention anywhere in a line (handles "✅ Alternativa correta: B", "Gabarito: C", etc.)
   var GAB_ANY = /(?:gabarito|resposta(?:\s*certa|\s*correta)?|alternativa\s*correta)\s*(?:é|eh)?\s*[:\-]?\s*\(?([a-eA-E])\)?/i;
+  // Detects the start of an explanation/commentary line that follows a gabarito
+  // ("Justificativa: ...", "Comentário: ...", "Explicação: ..."), so that text
+  // gets captured as gabaritoComentado instead of discarded.
+  var COMMENT_START = /^(?:justificativa|coment[aá]rio(?:\s+do\s+gabarito)?|explica[cç][aã]o)\s*[:\-]?\s*(.*)$/i;
 
   // Strips Markdown decoration (##/### headings, leading -/*/• bullets, **bold**)
   // so questions copied from ChatGPT/Claude-style Markdown answer sheets
@@ -902,6 +967,7 @@
       if(current && (current.text.trim() || current.alternatives.length)){
         current.text = current.text.trim();
         current.alternatives.forEach(function(a){ a.text = a.text.trim(); });
+        current.gabaritoComentado = (current.gabaritoComentado || '').trim();
         questions.push(current);
       }
     }
@@ -914,18 +980,28 @@
       var qm = matchQuestionStart(line, expectedNext);
       if(qm){
         pushCurrent();
-        current = { number: questions.length + 1, text: qm.text, alternatives: [], gabarito: null, locked: false };
+        current = { number: questions.length + 1, text: qm.text, alternatives: [], gabarito: null, gabaritoComentado: '', locked: false, commentOpen: false };
         return;
       }
 
       if(isNoiseLine(line)) return;
 
       if(!current){
-        current = { number: 1, text: "", alternatives: [], gabarito: null, locked: false };
+        current = { number: 1, text: "", alternatives: [], gabarito: null, gabaritoComentado: '', locked: false, commentOpen: false };
       }
       if(current.locked){
-        // Once the gabarito for this question was found, ignore trailing
-        // commentary/explanation lines until the next question starts.
+        // Once the gabarito for this question was found, capture any
+        // explanation/justification that follows it as gabaritoComentado,
+        // instead of discarding it.
+        var cm = line.match(COMMENT_START);
+        if(cm){
+          current.gabaritoComentado = (current.gabaritoComentado ? current.gabaritoComentado + ' ' : '') + (cm[1] || '').trim();
+          current.commentOpen = true;
+          return;
+        }
+        if(current.commentOpen){
+          current.gabaritoComentado = (current.gabaritoComentado ? current.gabaritoComentado + ' ' : '') + line;
+        }
         return;
       }
 
@@ -1097,6 +1173,12 @@
         app.querySelector('.row').insertAdjacentElement('afterend', errorBox);
         return;
       }
+      var stamp = authorLabel();
+      var stampedAt = Date.now();
+      parsed.forEach(function(q){
+        q.addedBy = stamp;
+        q.addedAt = stampedAt;
+      });
       state.rawText = raw;
       state.questions = parsed;
       state.dailyRun = null;
@@ -1274,7 +1356,7 @@
       var row = el('div', { class: 'saved-item' }, [
         el('div', {}, [
           el('div', { class: 'name' }, [deck.name]),
-          el('div', { class: 'meta' }, [deck.count + ' questões'])
+          el('div', { class: 'meta' }, [deck.count + ' questões' + (deck.createdBy ? ' · por ' + deck.createdBy : '')])
         ]),
         el('div', { class: 'saved-actions' }, [
           el('button', { class: 'link-btn', onclick: function(){
@@ -1319,7 +1401,7 @@
     if(!name) return;
     var disc = state.room.data.disciplinas.find(function(d){ return d.id === target.disciplinaId; });
     if(!disc){ alert('Essa disciplina não existe mais (pode ter sido excluída).'); return; }
-    disc.decks.push({ id: 'k' + Date.now(), name: name, count: state.questions.length, questions: state.questions, createdAt: Date.now() });
+    disc.decks.push({ id: 'k' + Date.now(), name: name, count: state.questions.length, questions: state.questions, createdAt: Date.now(), createdBy: authorLabel() });
     await persistRoom();
     state.pasteTarget = null;
     state.roomView = 'subject-detail';
@@ -1371,7 +1453,7 @@
         var row = el('div', { class: 'saved-item' }, [
           el('div', {}, [
             el('div', { class: 'name' }, [item.name]),
-            el('div', { class: 'meta' }, [item.count + ' questões']),
+            el('div', { class: 'meta' }, [item.count + ' questões' + (item.createdBy ? ' · por ' + item.createdBy : '')]),
           ]),
           el('div', { class: 'saved-actions' }, [
             el('button', { class: 'link-btn', onclick: function(){ openDeck(item.id, shared); } }, ['Abrir']),
@@ -1419,7 +1501,7 @@
     var id = 'd' + Date.now();
     await saveKey('deck-' + id, { questions: state.questions }, shared);
     var idx = await loadKey('decks-index', shared) || [];
-    idx.push({ id: id, name: name, count: state.questions.length, createdAt: Date.now() });
+    idx.push({ id: id, name: name, count: state.questions.length, createdAt: Date.now(), createdBy: authorLabel() });
     await saveKey('decks-index', idx, shared);
     alert(shared ? 'Simulado salvo para o grupo.' : 'Simulado salvo.');
   }
@@ -1460,6 +1542,12 @@
         item.appendChild(renderQuestionEditor(q, i));
       } else {
         item.appendChild(el('div', { class: 'review-text' }, [truncate(q.text, 140)]));
+        if(q.addedBy){
+          item.appendChild(el('div', { class: 'hint', style: 'margin:-4px 0 8px;' }, ['Adicionado por ' + q.addedBy]));
+        }
+        if(q.gabaritoComentado){
+          item.appendChild(el('div', { class: 'hint', style: 'margin:-4px 0 8px;' }, ['💬 Tem gabarito comentado']));
+        }
 
         if(!hasGab){
           var picker = el('div', { class: 'letter-pick' });
@@ -1586,6 +1674,12 @@
     }, ['+ adicionar alternativa']);
     wrap.appendChild(addBtn);
 
+    wrap.appendChild(el('div', { class: 'edit-label' }, ['Gabarito comentado (opcional) — explicação de por que a resposta está certa']));
+    var commentArea = el('textarea', { class: 'edit-textarea', style: 'min-height:60px;' });
+    commentArea.value = q.gabaritoComentado || '';
+    commentArea.addEventListener('input', function(){ q.gabaritoComentado = commentArea.value; });
+    wrap.appendChild(commentArea);
+
     var doneRow = el('div', { class: 'edit-done-row' });
     var doneBtn = el('button', {
       class: 'btn-ghost',
@@ -1668,6 +1762,12 @@
         fb = el('div', { class: 'feedback bad' }, ['Não respondida — a resposta certa é a letra ' + q.gabarito + '.']);
       }
       app.appendChild(fb);
+      if(q.gabaritoComentado){
+        app.appendChild(el('div', { class: 'comment-box' }, [
+          el('div', { class: 'comment-label' }, ['Gabarito comentado']),
+          q.gabaritoComentado
+        ]));
+      }
     }
 
     var actions = el('div', { class: 'quiz-actions' });
