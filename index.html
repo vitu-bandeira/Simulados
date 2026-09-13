@@ -78,7 +78,7 @@
   /* ---------- Paste view ---------- */
   .lede{ font-family:var(--serif); font-size:1.05rem; line-height:1.55; color:var(--ink); margin:0 0 18px; max-width:62ch; }
   textarea{
-    width:100%; min-height:280px; resize:vertical;
+    width:100%; min-height:520px; resize:vertical;
     font-family:'Courier New', monospace; font-size:0.92rem; line-height:1.5;
     padding:16px; border:1px solid var(--line); border-radius:var(--radius);
     background:var(--white); color:var(--ink);
@@ -132,6 +132,35 @@
     font-family:var(--sans); font-weight:600; font-size:0.82rem; cursor:pointer; color:var(--ink);
   }
   .letter-pick button.chosen{ background:var(--ink); color:var(--white); border-color:var(--ink); }
+  .review-actions{ display:flex; gap:14px; margin-top:8px; }
+  .review-actions button{ background:none; border:none; padding:0; cursor:pointer; font-family:var(--sans); font-size:0.82rem; color:var(--ink); text-decoration:underline; }
+  .review-actions button.danger{ color:var(--red); }
+
+  .edit-block{ margin-top:8px; }
+  .edit-label{ font-family:var(--sans); font-size:0.74rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--graphite); opacity:0.7; margin:12px 0 4px; }
+  .edit-label:first-child{ margin-top:0; }
+  .edit-textarea{
+    width:100%; min-height:80px; resize:vertical; font-family:var(--serif); font-size:0.92rem; line-height:1.5;
+    padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--white); color:var(--ink);
+  }
+  .edit-alt-row{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .edit-alt-letter{
+    width:26px; height:26px; flex:none; border-radius:50%; border:1.5px solid var(--line); background:var(--paper);
+    display:flex; align-items:center; justify-content:center; font-family:var(--sans); font-weight:700; font-size:0.78rem; color:var(--ink); cursor:pointer;
+  }
+  .edit-alt-letter.chosen{ background:var(--ink); color:var(--white); border-color:var(--ink); }
+  .edit-alt-row input{
+    flex:1; font-family:var(--serif); font-size:0.92rem; padding:7px 10px; border:1px solid var(--line); border-radius:8px; background:var(--white); color:var(--ink);
+  }
+  .edit-alt-remove{
+    flex:none; background:none; border:none; color:var(--red); font-size:1.1rem; line-height:1; cursor:pointer; padding:4px 6px;
+  }
+  .add-alt-btn{
+    background:none; border:1px dashed var(--line); border-radius:8px; padding:6px 12px; margin-top:2px;
+    font-family:var(--sans); font-size:0.82rem; color:var(--ink); cursor:pointer;
+  }
+  .add-alt-btn:hover{ border-color:var(--ink); }
+  .edit-done-row{ display:flex; justify-content:flex-end; margin-top:12px; }
 
   /* ---------- Progress bubbles ---------- */
   .progress-row{ display:flex; gap:5px; flex-wrap:wrap; margin-bottom:24px; }
@@ -238,28 +267,65 @@
     DAILY_FILE_ID: ''
   };
 
-  /* ============ SIMULADO DIÁRIO (banco global, sem reset, todo mundo soma questões) ============ */
+  /* ============ SIMULADO DIÁRIO ============ */
+  // O banco de questões do dia é compartilhado (arquivo global no Drive).
+  // Ele "vira o dia" às 5h da manhã: a partir desse horário, quem abrir o
+  // site já encontra o pool zerado para o novo dia. O resultado de cada
+  // pessoa no dia anterior fica guardado no arquivo PESSOAL dela (não no
+  // arquivo global), com data, total de questões, nota e o detalhe de
+  // quais acertou/errou — assim cada um só vê o próprio histórico.
   var dailyFileId = CONFIG.DAILY_FILE_ID || null;
-  var dailyData = { questions: [] };
+  var dailyData = { day: null, questions: [] };
+  var DAILY_CUTOFF_HOUR = 5;
+
+  function pad2(n){ return n < 10 ? '0' + n : '' + n; }
+
+  // Chave do "dia lógico" (ex: "2026-09-12"). Antes das 5h, ainda conta
+  // como o dia anterior — é assim que o reset acontece só de madrugada.
+  function dailyKeyFor(date){
+    var shifted = new Date(date.getTime() - DAILY_CUTOFF_HOUR * 60 * 60 * 1000);
+    return shifted.getFullYear() + '-' + pad2(shifted.getMonth() + 1) + '-' + pad2(shifted.getDate());
+  }
+  function todayDailyKey(){ return dailyKeyFor(new Date()); }
+  function formatDayLabel(key){
+    var parts = (key || '').split('-');
+    return parts.length === 3 ? (parts[2] + '/' + parts[1] + '/' + parts[0]) : (key || '');
+  }
+
+  // Zera o pool em memória se o dia mudou. Não apaga nada de ninguém: o
+  // histórico de cada pessoa já foi salvo por ela mesma, individualmente,
+  // no momento em que respondeu (ver saveDailyResult). Retorna true se
+  // resetou (útil pra saber se precisa regravar o arquivo compartilhado).
+  async function ensureFreshDailyPool(){
+    var today = todayDailyKey();
+    if(dailyData.day === today) return false;
+    dailyData = { day: today, questions: [] };
+    if(dailyFileId){
+      try{ await writeJsonFile(dailyFileId, dailyData); }
+      catch(e){ console.error(e); }
+    }
+    return true;
+  }
 
   async function loadDailyFile(){
     if(CONFIG.DAILY_FILE_ID){
       dailyFileId = CONFIG.DAILY_FILE_ID;
-      dailyData = (await readJsonFile(dailyFileId)) || { questions: [] };
-      return;
-    }
-    var found = await findFileByName('simulado-concurso-diario.json');
-    if(found){
-      dailyFileId = found;
-      dailyData = (await readJsonFile(found)) || { questions: [] };
+      dailyData = (await readJsonFile(dailyFileId)) || { day: null, questions: [] };
     } else {
-      dailyData = { questions: [] };
+      var found = await findFileByName('simulado-concurso-diario.json');
+      if(found){
+        dailyFileId = found;
+        dailyData = (await readJsonFile(found)) || { day: null, questions: [] };
+      } else {
+        dailyData = { day: null, questions: [] };
+      }
     }
+    await ensureFreshDailyPool();
   }
 
   async function ensureDailyFile(){
     if(dailyFileId) return dailyFileId;
-    var id = await createJsonFile('simulado-concurso-diario.json', { questions: [] });
+    var id = await createJsonFile('simulado-concurso-diario.json', { day: todayDailyKey(), questions: [] });
     await shareFileAnyoneWriter(id);
     dailyFileId = id;
     window.prompt(
@@ -273,7 +339,8 @@
     var id = await ensureDailyFile();
     // recarrega antes de anexar, para não perder perguntas que outra pessoa
     // tenha adicionado nesse meio-tempo
-    try{ dailyData = (await readJsonFile(id)) || { questions: [] }; }catch(e){ /* segue com o que já tem em memória */ }
+    try{ dailyData = (await readJsonFile(id)) || { day: todayDailyKey(), questions: [] }; }catch(e){ /* segue com o que já tem em memória */ }
+    await ensureFreshDailyPool(); // por garantia, caso o dia tenha virado desde a última leitura
     var startNumber = dailyData.questions.length;
     var tagged = newQuestions.map(function(q, i){
       return {
@@ -291,9 +358,16 @@
     return true;
   }
 
-  function openDailyQuiz(){
+  async function openDailyQuiz(){
+    // busca a versão mais recente antes de abrir, pra não responder um
+    // pool que já virou (ex: aba aberta desde antes das 5h)
+    if(dailyFileId){
+      try{ dailyData = (await readJsonFile(dailyFileId)) || dailyData; }catch(e){ /* segue com o que já tem em memória */ }
+    }
+    var rolled = await ensureFreshDailyPool();
+    if(rolled) render(); // atualiza a contagem exibida se o dia acabou de virar
     if(dailyData.questions.length === 0){
-      alert('O Simulado Diário ainda não tem nenhuma questão. Adicione a primeira!');
+      alert('O Simulado Diário de hoje ainda não tem nenhuma questão. Adicione a primeira!');
       return;
     }
     state.questions = JSON.parse(JSON.stringify(dailyData.questions));
@@ -301,8 +375,48 @@
     state.currentIndex = 0;
     state.submitted = false;
     state.pasteTarget = null;
+    state.dailyRun = { day: dailyData.day };
     state.view = 'review';
     render();
+  }
+
+  // Lê/grava o histórico pessoal do Simulado Diário no arquivo PESSOAL
+  // (mesmo mecanismo usado por saveKey/loadKey em outras partes do app).
+  function getDailyHistory(){
+    return (personalData && personalData.dailyHistory) || [];
+  }
+
+  async function saveDailyResult(){
+    if(!state.dailyRun) return;
+    var day = state.dailyRun.day;
+    var correct = 0, wrong = 0;
+    var perQuestion = state.questions.map(function(q, i){
+      var a = state.answers[i];
+      var chosen = (a && !a.skipped) ? a.letter : null;
+      var isCorrect = !!(q.gabarito && chosen && chosen === q.gabarito);
+      if(q.gabarito && chosen){ if(isCorrect) correct++; else wrong++; }
+      return {
+        number: q.number,
+        text: q.text,
+        alternatives: q.alternatives,
+        gabarito: q.gabarito,
+        chosen: chosen,
+        correct: isCorrect
+      };
+    });
+    var entry = {
+      day: day,
+      finishedAt: Date.now(),
+      total: state.questions.length,
+      correct: correct,
+      wrong: wrong,
+      questions: perQuestion
+    };
+    var history = getDailyHistory().slice();
+    var idx = history.findIndex(function(h){ return h.day === day; });
+    if(idx >= 0) history[idx] = entry; else history.push(entry);
+    history.sort(function(a, b){ return a.day < b.day ? 1 : -1; }); // mais recente primeiro
+    await saveKey('dailyHistory', history, false);
   }
 
   function renderDailySectionInto(container){
@@ -310,10 +424,12 @@
     var section = el('div', { style: 'margin-top:30px; border-top:1px solid var(--line-soft); padding-top:18px;' });
     section.appendChild(el('div', { style: 'font-family:var(--serif); font-weight:600; color:var(--ink); margin-bottom:8px;' }, ['Simulado Diário']));
     section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
-      'Um banco de questões só, compartilhado por todo mundo que usa o site. Qualquer pessoa pode somar questões novas, e todo mundo responde o mesmo conjunto, sem reset.'
+      'Um banco de questões compartilhado por todo mundo que usa o site. Qualquer pessoa pode somar questões novas, e todo mundo responde o mesmo conjunto — o pool reseta sozinho toda madrugada, às 5h.'
     ]));
+    var dayLabel = dailyData.day ? formatDayLabel(dailyData.day) : '';
     section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px;' }, [
-      dailyData.questions.length + (dailyData.questions.length === 1 ? ' questão acumulada' : ' questões acumuladas')
+      dailyData.questions.length + (dailyData.questions.length === 1 ? ' questão acumulada' : ' questões acumuladas') +
+      (dayLabel ? ' hoje (' + dayLabel + ')' : '')
     ]));
 
     var row = el('div', { class: 'row', style: 'margin-top:0;' });
@@ -330,7 +446,75 @@
     row.appendChild(addBtn);
     section.appendChild(row);
 
+    renderDailyHistoryInto(section);
+
     container.appendChild(section);
+  }
+
+  function renderDailyHistoryInto(container){
+    var history = getDailyHistory();
+    if(history.length === 0) return;
+
+    var histWrap = el('div', { style: 'margin-top:18px;' });
+    histWrap.appendChild(el('div', { style: 'font-family:var(--sans); font-weight:600; font-size:0.85rem; color:var(--graphite); margin-bottom:8px;' }, ['Seu histórico']));
+
+    var list = el('div', { class: 'saved-list' });
+    history.forEach(function(entry){
+      var scored = entry.correct + entry.wrong;
+      var pct = scored ? Math.round((entry.correct / scored) * 100) : 0;
+      var item = el('div', { class: 'saved-item' }, [
+        el('div', {}, [
+          el('div', { class: 'name' }, [formatDayLabel(entry.day)]),
+          el('div', { class: 'meta' }, [
+            entry.total + (entry.total === 1 ? ' questão' : ' questões') +
+            ' · ' + entry.correct + '/' + scored + ' (' + pct + '%)'
+          ])
+        ])
+      ]);
+      var viewBtn = el('button', { class: 'link-btn' }, ['Ver detalhes']);
+      viewBtn.addEventListener('click', function(){
+        state.historyEntry = entry;
+        state.view = 'dailyHistoryDetail';
+        render();
+      });
+      var actions = el('div', { class: 'saved-actions' }, [viewBtn]);
+      item.appendChild(actions);
+      list.appendChild(item);
+    });
+    histWrap.appendChild(list);
+    container.appendChild(histWrap);
+  }
+
+  function renderDailyHistoryDetail(){
+    var entry = state.historyEntry;
+    if(!entry){ state.view = 'paste'; render(); return; }
+    var scored = entry.correct + entry.wrong;
+    var pct = scored ? Math.round((entry.correct / scored) * 100) : 0;
+
+    var hero = el('div', { class: 'score-hero' }, [
+      el('div', { class: 'score-num' }, [entry.correct + ' / ' + scored]),
+      el('div', { class: 'score-sub' }, [
+        pct + '% de acerto · Simulado Diário de ' + formatDayLabel(entry.day)
+      ])
+    ]);
+    app.appendChild(hero);
+
+    entry.questions.forEach(function(q){
+      var tag, tagClass;
+      if(!q.chosen){ tag = 'não respondida'; tagClass = 'skip'; }
+      else if(!q.gabarito){ tag = 'sem gabarito'; tagClass = 'skip'; }
+      else if(q.correct){ tag = 'certa'; tagClass = 'correct'; }
+      else { tag = 'errada (' + q.chosen + ' → ' + q.gabarito + ')'; tagClass = 'wrong'; }
+
+      app.appendChild(el('div', { class: 'result-item' }, [
+        el('span', { class: 'rtext' }, [q.number + '. ' + truncate(q.text, 70)]),
+        el('span', { class: 'result-tag ' + tagClass }, [tag])
+      ]));
+    });
+
+    var backBtn = el('button', { class: 'btn-ghost' }, ['← Voltar']);
+    backBtn.addEventListener('click', function(){ state.historyEntry = null; state.view = 'paste'; render(); });
+    app.appendChild(el('div', { class: 'row' }, [backBtn]));
   }
 
   /* ============ SALAS (rooms) ============ */
@@ -790,7 +974,10 @@
     room: null,            // { code, fileId, data } quando dentro de uma sala
     roomView: 'subjects',  // subjects | subject-detail
     activeDisciplinaId: null,
-    pasteTarget: null       // { roomCode, disciplinaId } quando colando p/ salvar numa disciplina
+    pasteTarget: null,      // { roomCode, disciplinaId } quando colando p/ salvar numa disciplina
+    reviewEditIndex: null,  // índice da questão sendo editada na tela de revisão (ou null)
+    dailyRun: null,         // { day } quando o simulado atual é o Diário, p/ salvar no histórico ao enviar
+    historyEntry: null      // entrada do histórico do Diário sendo visualizada (tela dailyHistoryDetail)
   };
 
   var app = document.getElementById('app');
@@ -807,6 +994,9 @@
     state.submitted = false;
     state.room = null;
     state.pasteTarget = null;
+    state.reviewEditIndex = null;
+    state.dailyRun = null;
+    state.historyEntry = null;
     render();
   }
 
@@ -839,6 +1029,7 @@
     else if(state.view === 'quiz') renderQuiz();
     else if(state.view === 'result') renderResult();
     else if(state.view === 'room') renderRoom();
+    else if(state.view === 'dailyHistoryDetail') renderDailyHistoryDetail();
     updateFootnote();
   }
 
@@ -908,6 +1099,7 @@
       }
       state.rawText = raw;
       state.questions = parsed;
+      state.dailyRun = null;
       state.answers = {};
       state.currentIndex = 0;
       state.view = 'review';
@@ -1091,6 +1283,7 @@
             state.currentIndex = 0;
             state.submitted = false;
             state.pasteTarget = null;
+            state.dailyRun = null;
             state.view = 'review';
             render();
           } }, ['Abrir']),
@@ -1197,6 +1390,7 @@
       state.answers = {};
       state.currentIndex = 0;
       state.submitted = false;
+      state.dailyRun = null;
       state.view = 'review';
       render();
     });
@@ -1231,6 +1425,15 @@
   }
 
   /* ============ REVIEW VIEW ============ */
+  function relabelAlternatives(q){
+    // Recomputes A/B/C/... letters from the alternatives' current order,
+    // keeping the gabarito pointed at the same alternative it was before
+    // (even if its letter shifted because one above it was removed).
+    var gabAlt = q.alternatives.find(function(a){ return a.letter === q.gabarito; });
+    q.alternatives.forEach(function(a, idx){ a.letter = String.fromCharCode(65 + idx); });
+    q.gabarito = gabAlt ? gabAlt.letter : null;
+  }
+
   function renderReview(){
     var missing = state.questions.filter(function(q){ return !q.gabarito; }).length;
 
@@ -1242,6 +1445,7 @@
 
     var list = el('div', {});
     state.questions.forEach(function(q, i){
+      var editing = state.reviewEditIndex === i;
       var hasGab = !!q.gabarito;
       var item = el('div', { class: 'review-item' + (hasGab ? '' : ' needs') });
       var top = el('div', { class: 'review-top' }, [
@@ -1251,21 +1455,44 @@
           : el('span', { class: 'badge missing' }, ['sem gabarito'])
       ]);
       item.appendChild(top);
-      item.appendChild(el('div', { class: 'review-text' }, [truncate(q.text, 140)]));
 
-      if(!hasGab){
-        var picker = el('div', { class: 'letter-pick' });
-        q.alternatives.forEach(function(a){
-          var b = el('button', {
-            onclick: function(){
-              q.gabarito = a.letter;
-              render();
-            }
-          }, [a.letter]);
-          picker.appendChild(b);
-        });
-        item.appendChild(picker);
+      if(editing){
+        item.appendChild(renderQuestionEditor(q, i));
+      } else {
+        item.appendChild(el('div', { class: 'review-text' }, [truncate(q.text, 140)]));
+
+        if(!hasGab){
+          var picker = el('div', { class: 'letter-pick' });
+          q.alternatives.forEach(function(a){
+            var b = el('button', {
+              onclick: function(){
+                q.gabarito = a.letter;
+                render();
+              }
+            }, [a.letter]);
+            picker.appendChild(b);
+          });
+          item.appendChild(picker);
+        }
+
+        var actions = el('div', { class: 'review-actions' });
+        var editLink = el('button', {
+          onclick: function(){ state.reviewEditIndex = i; render(); }
+        }, ['Editar questão']);
+        var removeLink = el('button', {
+          class: 'danger',
+          onclick: function(){
+            if(!confirm('Remover a Questão ' + q.number + '?')) return;
+            state.questions.splice(i, 1);
+            state.questions.forEach(function(qq, idx){ qq.number = idx + 1; });
+            render();
+          }
+        }, ['Remover questão']);
+        actions.appendChild(editLink);
+        actions.appendChild(removeLink);
+        item.appendChild(actions);
       }
+
       list.appendChild(item);
     });
     app.appendChild(list);
@@ -1305,6 +1532,69 @@
     }
 
     app.appendChild(el('div', { class: 'row' }, buttons));
+  }
+
+  // Builds the inline editor shown inside a review card when the person
+  // clicks "Editar questão". Edits apply live to the question object as
+  // they're typed; there's no separate save step, just a "Concluído" button
+  // that closes the editor. Also supports adding/removing alternatives and
+  // re-picking the gabarito.
+  function renderQuestionEditor(q, i){
+    var wrap = el('div', { class: 'edit-block' });
+
+    wrap.appendChild(el('div', { class: 'edit-label' }, ['Enunciado']));
+    var textArea = el('textarea', { class: 'edit-textarea' });
+    textArea.value = q.text;
+    textArea.addEventListener('input', function(){ q.text = textArea.value; });
+    wrap.appendChild(textArea);
+
+    wrap.appendChild(el('div', { class: 'edit-label' }, ['Alternativas — clique na letra para marcar como gabarito']));
+    var altList = el('div', {});
+    q.alternatives.forEach(function(a, altIdx){
+      var row = el('div', { class: 'edit-alt-row' });
+      var letterBtn = el('button', {
+        class: 'edit-alt-letter' + (q.gabarito === a.letter ? ' chosen' : ''),
+        title: 'Marcar ' + a.letter + ' como gabarito',
+        onclick: function(){ q.gabarito = a.letter; render(); }
+      }, [a.letter]);
+      var input = el('input', { type: 'text', value: a.text });
+      input.addEventListener('input', function(){ a.text = input.value; });
+      var removeBtn = el('button', {
+        class: 'edit-alt-remove',
+        title: 'Remover esta alternativa',
+        onclick: function(){
+          if(q.alternatives.length <= 2){ alert('A questão precisa de pelo menos 2 alternativas.'); return; }
+          q.alternatives.splice(altIdx, 1);
+          relabelAlternatives(q);
+          render();
+        }
+      }, ['×']);
+      row.appendChild(letterBtn);
+      row.appendChild(input);
+      row.appendChild(removeBtn);
+      altList.appendChild(row);
+    });
+    wrap.appendChild(altList);
+
+    var addBtn = el('button', {
+      class: 'add-alt-btn',
+      onclick: function(){
+        q.alternatives.push({ letter: '?', text: '' });
+        relabelAlternatives(q);
+        render();
+      }
+    }, ['+ adicionar alternativa']);
+    wrap.appendChild(addBtn);
+
+    var doneRow = el('div', { class: 'edit-done-row' });
+    var doneBtn = el('button', {
+      class: 'btn-ghost',
+      onclick: function(){ state.reviewEditIndex = null; render(); }
+    }, ['Concluído']);
+    doneRow.appendChild(doneBtn);
+    wrap.appendChild(doneRow);
+
+    return wrap;
   }
 
   function truncate(str, n){
@@ -1438,6 +1728,9 @@
     state.submitted = true;
     state.view = 'result';
     state.currentIndex = 0;
+    if(state.dailyRun){
+      saveDailyResult().catch(function(e){ console.error(e); });
+    }
     render();
   }
 
