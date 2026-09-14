@@ -327,7 +327,7 @@
     // permissão de criar o arquivo do Simulado Diário de cada dia — assim
     // ele sempre fica salvo na SUA conta, nunca na de um usuário qualquer.
     // Preencha com o e-mail exato da conta que você usa para entrar no app.
-    DEV_EMAIL: '',
+    DEV_EMAIL: 'victope1234567@gmail.com',
     // Arquivo-índice pequeno que só guarda "qual é o dia de hoje e qual o
     // ID do arquivo de questões de hoje". Criado uma única vez (por você) —
     // depois disso, todo mundo usa esse mesmo índice para achar o arquivo
@@ -1327,6 +1327,56 @@
 
     // saved decks section
     renderSavedDecksInto(app);
+
+    // painel de diagnóstico — só aparece pra você (CONFIG.DEV_EMAIL)
+    renderDevConfigPanelInto(app);
+  }
+
+  // Mostra, só para o desenvolvedor, os IDs que o app já resolveu em
+  // memória para os arquivos compartilhados. Isso existe porque
+  // ROOMS_INDEX_FILE_ID e DAILY_INDEX_FILE_ID em CONFIG começam vazios: o
+  // app acha o arquivo certo automaticamente na SUA conta (que foi quem
+  // criou), mas outras pessoas não têm como achar esse mesmo arquivo
+  // sozinhas — cada conta só enxerga os próprios arquivos numa busca por
+  // nome. Enquanto o ID não estiver fixo em CONFIG, só você consegue usar
+  // Salas/Diário; qualquer outra pessoa recebe "código não encontrado" ou
+  // "ainda não foi criado" mesmo com tudo certo, porque a sessão dela
+  // nunca encontra o arquivo. Copiar esses IDs para CONFIG resolve isso de vez.
+  function renderDevConfigPanelInto(container){
+    if(!isDeveloperAccount()) return;
+    var section = el('div', { style: 'margin-top:30px; border-top:1px solid var(--line-soft); padding-top:18px;' });
+    section.appendChild(el('div', { style: 'font-family:var(--serif); font-weight:600; color:var(--ink); margin-bottom:8px;' }, ['⚙ Configuração (só você vê isso)']));
+    section.appendChild(el('div', { class: 'hint', style: 'margin-bottom:12px;' }, [
+      'Cole os IDs abaixo em CONFIG no código, no topo do arquivo. Enquanto ROOMS_INDEX_FILE_ID e DAILY_INDEX_FILE_ID estiverem vazios, só a sua conta consegue achar essas salas/o Diário — qualquer outra pessoa recebe erro de "não encontrado" mesmo com o código certo.'
+    ]));
+
+    var rows = [
+      { label: 'ROOMS_INDEX_FILE_ID', value: roomsIndexFileId, ok: !!CONFIG.ROOMS_INDEX_FILE_ID },
+      { label: 'DAILY_INDEX_FILE_ID', value: dailyIndexFileId, ok: !!CONFIG.DAILY_INDEX_FILE_ID },
+      { label: 'GROUP_FILE_ID', value: CONFIG.GROUP_FILE_ID || groupFileId, ok: !!CONFIG.GROUP_FILE_ID }
+    ];
+    rows.forEach(function(r){
+      var row = el('div', { class: 'saved-item' }, [
+        el('div', {}, [
+          el('div', { class: 'name' }, [r.label]),
+          el('div', { class: 'meta' }, [
+            r.ok
+              ? 'já fixado em CONFIG ✓'
+              : (r.value ? r.value : 'ainda não existe — crie uma sala ou adicione uma questão ao Diário primeiro')
+          ])
+        ])
+      ]);
+      if(!r.ok && r.value){
+        var copyBtn = el('button', { class: 'link-btn', onclick: function(){
+          if(navigator.clipboard){ navigator.clipboard.writeText(r.value); }
+          alert(r.label + ':\n' + r.value + '\n\n(copiado — cole em CONFIG no código)');
+        } }, ['Copiar']);
+        row.appendChild(el('div', { class: 'saved-actions' }, [copyBtn]));
+      }
+      section.appendChild(row);
+    });
+
+    container.appendChild(section);
   }
 
   /* ============ SALAS: TELA INICIAL ============ */
