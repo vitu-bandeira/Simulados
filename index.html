@@ -372,6 +372,32 @@
     return !!CONFIG.DEV_EMAIL && !!userEmail && userEmail.toLowerCase() === CONFIG.DEV_EMAIL.toLowerCase();
   }
 
+  // Dono de um e-mail específico (ou o desenvolvedor, que sempre pode).
+  // Se o e-mail não foi registrado (conteúdo antigo, de antes desse
+  // controle existir), só o desenvolvedor pode mexer — comportamento mais
+  // seguro por padrão.
+  function isOwnerEmail(email){
+    return isDeveloperAccount() || (!!userEmail && !!email && userEmail.toLowerCase() === email.toLowerCase());
+  }
+
+  // Permissão de editar/remover/adicionar questões no simulado ATUALMENTE
+  // aberto. Um simulado recém-colado (ainda não salvo em lugar nenhum) pode
+  // sempre ser mexido — só quem está vendo a tela consegue vê-lo mesmo. Já
+  // salvo (pessoal, do grupo ou de uma sala), só quem criou ou o
+  // desenvolvedor. O Diário usa uma checagem por questão (ver
+  // canManageQuestion), já que ali várias pessoas contribuem juntas.
+  function canManageDeck(){
+    if(!state.deckRef || state.deckRef.kind === 'daily') return true;
+    return isOwnerEmail(state.deckOwnerEmail);
+  }
+
+  function canManageQuestion(q){
+    if(state.deckRef && state.deckRef.kind === 'daily'){
+      return isOwnerEmail(q.addedByEmail);
+    }
+    return canManageDeck();
+  }
+
   async function loadDailyIndex(){
     if(CONFIG.DAILY_INDEX_FILE_ID){
       dailyIndexFileId = CONFIG.DAILY_INDEX_FILE_ID;
@@ -448,6 +474,7 @@
         gabarito: q.gabarito,
         gabaritoComentado: q.gabaritoComentado || '',
         addedBy: q.addedBy || authorLabel(),
+        addedByEmail: q.addedByEmail || userEmail || '',
         addedAt: q.addedAt || Date.now(),
         qid: q.qid || ('q' + Date.now().toString(36) + i.toString(36) + Math.random().toString(36).slice(2, 7)),
         comments: q.comments || []
@@ -479,6 +506,7 @@
     state.pasteTarget = null;
     state.dailyRun = { day: dailyData.day };
     state.deckRef = { kind: 'daily' };
+    state.deckOwnerEmail = null;
     state.view = 'review';
     render();
   }
@@ -1115,7 +1143,8 @@
     reviewEditIndex: null,  // índice da questão sendo editada na tela de revisão (ou null)
     dailyRun: null,         // { day } quando o simulado atual é o Diário, p/ salvar no histórico ao enviar
     historyEntry: null,     // entrada do histórico do Diário sendo visualizada (tela dailyHistoryDetail)
-    deckRef: null,          // { kind: 'daily'|'personal'|'group'|'room', ... } — de onde vieram as questões atuais, p/ salvar comentários no lugar certo
+    deckRef: null,          // { kind: 'daily'|'personal'|'group'|'room', ... } — de onde vieram as questões atuais, p/ salvar alterações/comentários no lugar certo
+    deckOwnerEmail: null,   // e-mail de quem criou o simulado atual (deckRef), p/ checar permissão de edição
     openComments: {}        // qid -> true/false, quais threads de comentário estão expandidas
   };
 
@@ -1137,6 +1166,7 @@
     state.dailyRun = null;
     state.historyEntry = null;
     state.deckRef = null;
+    state.deckOwnerEmail = null;
     render();
   }
 
@@ -1208,6 +1238,18 @@
       });
       dailyBanner.appendChild(cancelLink2);
       app.appendChild(dailyBanner);
+    } else if(state.pasteTarget && state.pasteTarget.type === 'append'){
+      var appendBanner = el('div', { class: 'feedback none' }, [
+        'Adicionando questões a este simulado — as ' + state.questions.length + ' que já estavam aqui continuam. '
+      ]);
+      var cancelLink3 = el('button', { class: 'link-btn' }, ['Cancelar e voltar']);
+      cancelLink3.addEventListener('click', function(){
+        state.pasteTarget = null;
+        state.view = 'review';
+        render();
+      });
+      appendBanner.appendChild(cancelLink3);
+      app.appendChild(appendBanner);
     }
 
     var lede = el('p', { class: 'lede' }, [
@@ -1238,17 +1280,32 @@
         return;
       }
       var stamp = authorLabel();
+      var stampEmail = userEmail || '';
       var stampedAt = Date.now();
       parsed.forEach(function(q, i){
         q.addedBy = stamp;
+        q.addedByEmail = stampEmail;
         q.addedAt = stampedAt;
         q.qid = 'q' + stampedAt.toString(36) + i.toString(36) + Math.random().toString(36).slice(2, 7);
         q.comments = [];
       });
+
+      if(state.pasteTarget && state.pasteTarget.type === 'append'){
+        state.questions = state.questions.concat(parsed);
+        state.questions.forEach(function(q, i){ q.number = i + 1; });
+        state.pasteTarget = null;
+        state.rawText = '';
+        state.view = 'review';
+        render();
+        persistDeckQuestions().catch(function(e){ console.error(e); });
+        return;
+      }
+
       state.rawText = raw;
       state.questions = parsed;
       state.dailyRun = null;
       state.deckRef = null;
+      state.deckOwnerEmail = null;
       state.answers = {};
       state.currentIndex = 0;
       state.view = 'review';
@@ -1434,10 +1491,11 @@
             state.pasteTarget = null;
             state.dailyRun = null;
             state.deckRef = { kind: 'room', roomCode: room.code, disciplinaId: disc.id, deckId: deck.id };
+            state.deckOwnerEmail = deck.createdByEmail || null;
             state.view = 'review';
             render();
           } }, ['Abrir']),
-          isOwner ? el('button', { class: 'link-btn danger', onclick: async function(){
+          (isOwner || isOwnerEmail(deck.createdByEmail)) ? el('button', { class: 'link-btn danger', onclick: async function(){
             if(!window.confirm('Excluir "' + deck.name + '"?')) return;
             disc.decks = disc.decks.filter(function(d){ return d.id !== deck.id; });
             await persistRoom();
@@ -1469,7 +1527,7 @@
     if(!name) return;
     var disc = state.room.data.disciplinas.find(function(d){ return d.id === target.disciplinaId; });
     if(!disc){ alert('Essa disciplina não existe mais (pode ter sido excluída).'); return; }
-    disc.decks.push({ id: 'k' + Date.now(), name: name, count: state.questions.length, questions: state.questions, createdAt: Date.now(), createdBy: authorLabel() });
+    disc.decks.push({ id: 'k' + Date.now(), name: name, count: state.questions.length, questions: state.questions, createdAt: Date.now(), createdBy: authorLabel(), createdByEmail: userEmail || '' });
     await persistRoom();
     state.pasteTarget = null;
     state.roomView = 'subject-detail';
@@ -1518,15 +1576,17 @@
         return;
       }
       idx.slice().reverse().forEach(function(item){
+        var canDelete = !shared || isOwnerEmail(item.createdByEmail);
+        var actionBtns = [ el('button', { class: 'link-btn', onclick: function(){ openDeck(item.id, shared); } }, ['Abrir']) ];
+        if(canDelete){
+          actionBtns.push(el('button', { class: 'link-btn danger', onclick: function(){ removeDeck(item.id, row, shared); } }, ['Excluir']));
+        }
         var row = el('div', { class: 'saved-item' }, [
           el('div', {}, [
             el('div', { class: 'name' }, [item.name]),
             el('div', { class: 'meta' }, [item.count + ' questões' + (item.createdBy ? ' · por ' + item.createdBy : '')]),
           ]),
-          el('div', { class: 'saved-actions' }, [
-            el('button', { class: 'link-btn', onclick: function(){ openDeck(item.id, shared); } }, ['Abrir']),
-            el('button', { class: 'link-btn danger', onclick: function(){ removeDeck(item.id, row, shared); } }, ['Excluir'])
-          ])
+          el('div', { class: 'saved-actions' }, actionBtns)
         ]);
         listWrap.appendChild(row);
       });
@@ -1542,6 +1602,7 @@
       state.submitted = false;
       state.dailyRun = null;
       state.deckRef = { kind: shared ? 'group' : 'personal', id: id };
+      state.deckOwnerEmail = data.createdByEmail || null;
       state.view = 'review';
       render();
     });
@@ -1568,9 +1629,9 @@
     var name = window.prompt('Nome para este simulado' + (shared ? ' (grupo)' : '') + ':', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
     if(!name) return;
     var id = 'd' + Date.now();
-    await saveKey('deck-' + id, { questions: state.questions }, shared);
+    await saveKey('deck-' + id, { questions: state.questions, createdByEmail: userEmail || '' }, shared);
     var idx = await loadKey('decks-index', shared) || [];
-    idx.push({ id: id, name: name, count: state.questions.length, createdAt: Date.now(), createdBy: authorLabel() });
+    idx.push({ id: id, name: name, count: state.questions.length, createdAt: Date.now(), createdBy: authorLabel(), createdByEmail: userEmail || '' });
     await saveKey('decks-index', idx, shared);
     alert(shared ? 'Simulado salvo para o grupo.' : 'Simulado salvo.');
   }
@@ -1626,6 +1687,71 @@
         }
       }
     }catch(e){ console.error(e); }
+  }
+
+  // Grava o array atual de questões (depois de editar, adicionar ou remover
+  // alguma) de volta no arquivo de origem. Para simulados pessoais/do
+  // grupo/de sala, só acontece se a pessoa puder mexer no simulado inteiro
+  // (canManageDeck). Para o Diário — que é colaborativo — cada questão só é
+  // sobrescrita/removida se a pessoa tinha permissão sobre ELA
+  // especificamente (canManageQuestion); questões de outras pessoas que
+  // ainda existem no arquivo remoto são preservadas mesmo que não estejam
+  // mais na lista local por algum motivo.
+  async function persistDeckQuestions(){
+    var ref = state.deckRef;
+    if(!ref) return;
+    try{
+      if(ref.kind === 'daily'){
+        if(!dailyFileId) return;
+        var fresh = (await readJsonFile(dailyFileId)) || dailyData;
+        var localIds = state.questions.map(function(q){ return q.qid; });
+        // aplica edições feitas em questões que a pessoa tinha permissão de mexer
+        state.questions.forEach(function(q){
+          if(!canManageQuestion(q)) return;
+          var idx = findQuestionIndexFor(fresh.questions, q);
+          if(idx >= 0){
+            fresh.questions[idx] = Object.assign({}, fresh.questions[idx], {
+              text: q.text, alternatives: q.alternatives, gabarito: q.gabarito,
+              gabaritoComentado: q.gabaritoComentado, qid: q.qid
+            });
+          } else {
+            fresh.questions.push(q);
+          }
+        });
+        // remove do arquivo remoto as questões que sumiram da lista local,
+        // mas só as que a pessoa tinha permissão de remover
+        fresh.questions = fresh.questions.filter(function(x){
+          return localIds.indexOf(x.qid) >= 0 || !canManageQuestion(x);
+        });
+        fresh.questions.forEach(function(q, i){ q.number = i + 1; });
+        await writeJsonFile(dailyFileId, fresh);
+        dailyData = fresh;
+      } else if(ref.kind === 'personal' || ref.kind === 'group'){
+        if(!canManageDeck()) return;
+        var shared = ref.kind === 'group';
+        var data = await loadKey('deck-' + ref.id, shared);
+        if(data){
+          data.questions = state.questions;
+          await saveKey('deck-' + ref.id, data, shared);
+        }
+        var idxList = await loadKey('decks-index', shared) || [];
+        var idxItem = idxList.find(function(d){ return d.id === ref.id; });
+        if(idxItem){ idxItem.count = state.questions.length; await saveKey('decks-index', idxList, shared); }
+      } else if(ref.kind === 'room' && state.room){
+        if(!canManageDeck()) return;
+        try{ state.room.data = (await readJsonFile(state.room.fileId)) || state.room.data; }catch(e){ /* segue com o que já tem em memória */ }
+        var disc = state.room.data.disciplinas.find(function(d){ return d.id === ref.disciplinaId; });
+        var deck = disc && disc.decks.find(function(d){ return d.id === ref.deckId; });
+        if(deck){
+          deck.questions = state.questions;
+          deck.count = state.questions.length;
+          await persistRoom();
+        }
+      }
+    }catch(e){
+      console.error(e);
+      alert('Não consegui salvar as alterações agora. Tenta de novo em alguns segundos.');
+    }
   }
 
   function formatDateTime(ts){
@@ -1739,22 +1865,25 @@
           item.appendChild(picker);
         }
 
-        var actions = el('div', { class: 'review-actions' });
-        var editLink = el('button', {
-          onclick: function(){ state.reviewEditIndex = i; render(); }
-        }, ['Editar questão']);
-        var removeLink = el('button', {
-          class: 'danger',
-          onclick: function(){
-            if(!confirm('Remover a Questão ' + q.number + '?')) return;
-            state.questions.splice(i, 1);
-            state.questions.forEach(function(qq, idx){ qq.number = idx + 1; });
-            render();
-          }
-        }, ['Remover questão']);
-        actions.appendChild(editLink);
-        actions.appendChild(removeLink);
-        item.appendChild(actions);
+        if(canManageQuestion(q)){
+          var actions = el('div', { class: 'review-actions' });
+          var editLink = el('button', {
+            onclick: function(){ state.reviewEditIndex = i; render(); }
+          }, ['Editar questão']);
+          var removeLink = el('button', {
+            class: 'danger',
+            onclick: function(){
+              if(!confirm('Remover a Questão ' + q.number + '?')) return;
+              state.questions.splice(i, 1);
+              state.questions.forEach(function(qq, idx){ qq.number = idx + 1; });
+              render();
+              persistDeckQuestions().catch(function(e){ console.error(e); });
+            }
+          }, ['Remover questão']);
+          actions.appendChild(editLink);
+          actions.appendChild(removeLink);
+          item.appendChild(actions);
+        }
         item.appendChild(renderCommentsToggle(q));
       }
 
@@ -1770,14 +1899,31 @@
       state.submitted = false;
       render();
     });
-    var editBtn = el('button', { class: 'btn-ghost' }, ['Editar texto']);
-    editBtn.addEventListener('click', function(){ state.view = 'paste'; render(); });
     var saveBtn = el('button', { class: 'btn-ghost' }, ['Salvar (só eu)']);
     saveBtn.addEventListener('click', function(){ saveCurrentDeck(false); });
     var saveGroupBtn = el('button', { class: 'btn-ghost' }, ['Salvar para o grupo']);
     saveGroupBtn.addEventListener('click', function(){ saveCurrentDeck(true); });
 
-    var buttons = [startBtn, editBtn, saveBtn, saveGroupBtn];
+    var buttons = [startBtn];
+    if(!state.deckRef){
+      // Simulado recém-colado, ainda não salvo em lugar nenhum — dá pra
+      // voltar e mexer no texto original livremente.
+      var editBtn = el('button', { class: 'btn-ghost' }, ['Editar texto']);
+      editBtn.addEventListener('click', function(){ state.view = 'paste'; render(); });
+      buttons.push(editBtn);
+    } else if(state.deckRef.kind !== 'daily' && canManageDeck()){
+      // Simulado já salvo (pessoal/grupo/sala) — só quem criou (ou o
+      // desenvolvedor) pode somar mais questões a ele.
+      var addMoreBtn = el('button', { class: 'btn-ghost' }, ['+ Adicionar mais questões']);
+      addMoreBtn.addEventListener('click', function(){
+        state.pasteTarget = { type: 'append' };
+        state.rawText = '';
+        state.view = 'paste';
+        render();
+      });
+      buttons.push(addMoreBtn);
+    }
+    buttons.push(saveBtn, saveGroupBtn);
     if(state.pasteTarget && state.pasteTarget.type === 'room' && state.room){
       var saveRoomBtn = el('button', { class: 'btn-primary' }, ['Salvar nesta disciplina']);
       saveRoomBtn.addEventListener('click', saveDeckToRoom);
@@ -1860,7 +2006,11 @@
     var doneRow = el('div', { class: 'edit-done-row' });
     var doneBtn = el('button', {
       class: 'btn-ghost',
-      onclick: function(){ state.reviewEditIndex = null; render(); }
+      onclick: function(){
+        state.reviewEditIndex = null;
+        render();
+        persistDeckQuestions().catch(function(e){ console.error(e); });
+      }
     }, ['Concluído']);
     doneRow.appendChild(doneBtn);
     wrap.appendChild(doneRow);
