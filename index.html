@@ -211,6 +211,14 @@
   }
   .comment-label{ font-family:var(--sans); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.65; margin-bottom:6px; }
 
+  .comments-thread{ margin:8px 0 4px; padding:10px 12px; border-radius:10px; background:var(--paper); border:1px solid var(--line-soft); }
+  .comment-item{ padding:6px 0; border-bottom:1px solid var(--line-soft); }
+  .comment-item:last-of-type{ border-bottom:none; }
+  .comment-meta{ font-family:var(--sans); font-size:0.72rem; color:var(--graphite); opacity:0.75; margin-bottom:2px; }
+  .comment-text{ font-family:var(--serif); font-size:0.9rem; color:var(--ink); line-height:1.45; }
+  .comment-input-row{ margin-top:10px; display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .comment-input-row textarea{ width:100%; }
+
   .quiz-actions{ display:flex; justify-content:space-between; align-items:center; margin-top:22px; gap:10px; flex-wrap:wrap; }
   .kbd-hint{ font-size:0.76rem; color:var(--graphite); opacity:0.55; }
 
@@ -392,7 +400,9 @@
         gabarito: q.gabarito,
         gabaritoComentado: q.gabaritoComentado || '',
         addedBy: q.addedBy || authorLabel(),
-        addedAt: q.addedAt || Date.now()
+        addedAt: q.addedAt || Date.now(),
+        qid: q.qid || ('q' + Date.now().toString(36) + i.toString(36) + Math.random().toString(36).slice(2, 7)),
+        comments: q.comments || []
       };
     });
     dailyData.questions = dailyData.questions.concat(tagged);
@@ -420,6 +430,7 @@
     state.submitted = false;
     state.pasteTarget = null;
     state.dailyRun = { day: dailyData.day };
+    state.deckRef = { kind: 'daily' };
     state.view = 'review';
     render();
   }
@@ -1053,7 +1064,9 @@
     pasteTarget: null,      // { roomCode, disciplinaId } quando colando p/ salvar numa disciplina
     reviewEditIndex: null,  // índice da questão sendo editada na tela de revisão (ou null)
     dailyRun: null,         // { day } quando o simulado atual é o Diário, p/ salvar no histórico ao enviar
-    historyEntry: null      // entrada do histórico do Diário sendo visualizada (tela dailyHistoryDetail)
+    historyEntry: null,     // entrada do histórico do Diário sendo visualizada (tela dailyHistoryDetail)
+    deckRef: null,          // { kind: 'daily'|'personal'|'group'|'room', ... } — de onde vieram as questões atuais, p/ salvar comentários no lugar certo
+    openComments: {}        // qid -> true/false, quais threads de comentário estão expandidas
   };
 
   var app = document.getElementById('app');
@@ -1073,6 +1086,7 @@
     state.reviewEditIndex = null;
     state.dailyRun = null;
     state.historyEntry = null;
+    state.deckRef = null;
     render();
   }
 
@@ -1175,13 +1189,16 @@
       }
       var stamp = authorLabel();
       var stampedAt = Date.now();
-      parsed.forEach(function(q){
+      parsed.forEach(function(q, i){
         q.addedBy = stamp;
         q.addedAt = stampedAt;
+        q.qid = 'q' + stampedAt.toString(36) + i.toString(36) + Math.random().toString(36).slice(2, 7);
+        q.comments = [];
       });
       state.rawText = raw;
       state.questions = parsed;
       state.dailyRun = null;
+      state.deckRef = null;
       state.answers = {};
       state.currentIndex = 0;
       state.view = 'review';
@@ -1366,6 +1383,7 @@
             state.submitted = false;
             state.pasteTarget = null;
             state.dailyRun = null;
+            state.deckRef = { kind: 'room', roomCode: room.code, disciplinaId: disc.id, deckId: deck.id };
             state.view = 'review';
             render();
           } }, ['Abrir']),
@@ -1473,6 +1491,7 @@
       state.currentIndex = 0;
       state.submitted = false;
       state.dailyRun = null;
+      state.deckRef = { kind: shared ? 'group' : 'personal', id: id };
       state.view = 'review';
       render();
     });
@@ -1507,6 +1526,113 @@
   }
 
   /* ============ REVIEW VIEW ============ */
+  function findQuestionIndexFor(list, q){
+    var idx = list.findIndex(function(x){ return q.qid && x.qid === q.qid; });
+    if(idx >= 0) return idx;
+    return list.findIndex(function(x){ return x.text === q.text; });
+  }
+
+  // Grava q.comments de volta no arquivo do Drive de onde essas questões
+  // vieram (Diário, um simulado salvo — pessoal ou do grupo —, ou o deck
+  // de uma disciplina de sala). Se as questões ainda não foram salvas em
+  // lugar nenhum (texto recém-colado), o comentário só existe localmente
+  // nesta sessão — não tem onde persistir ainda.
+  async function persistQuestionComments(q){
+    var ref = state.deckRef;
+    if(!ref) return;
+    try{
+      if(ref.kind === 'daily'){
+        if(!dailyFileId) return;
+        var fresh = (await readJsonFile(dailyFileId)) || dailyData;
+        var idx = findQuestionIndexFor(fresh.questions, q);
+        if(idx >= 0){
+          fresh.questions[idx].qid = q.qid;
+          fresh.questions[idx].comments = q.comments;
+          await writeJsonFile(dailyFileId, fresh);
+          dailyData = fresh;
+        }
+      } else if(ref.kind === 'personal' || ref.kind === 'group'){
+        var shared = ref.kind === 'group';
+        var data = await loadKey('deck-' + ref.id, shared);
+        if(data && data.questions){
+          var idx2 = findQuestionIndexFor(data.questions, q);
+          if(idx2 >= 0){
+            data.questions[idx2].qid = q.qid;
+            data.questions[idx2].comments = q.comments;
+            await saveKey('deck-' + ref.id, data, shared);
+          }
+        }
+      } else if(ref.kind === 'room' && state.room){
+        try{ state.room.data = (await readJsonFile(state.room.fileId)) || state.room.data; }catch(e){ /* segue com o que já tem em memória */ }
+        var disc = state.room.data.disciplinas.find(function(d){ return d.id === ref.disciplinaId; });
+        var deck = disc && disc.decks.find(function(d){ return d.id === ref.deckId; });
+        if(deck && deck.questions){
+          var idx3 = findQuestionIndexFor(deck.questions, q);
+          if(idx3 >= 0){
+            deck.questions[idx3].qid = q.qid;
+            deck.questions[idx3].comments = q.comments;
+            await persistRoom();
+          }
+        }
+      }
+    }catch(e){ console.error(e); }
+  }
+
+  function formatDateTime(ts){
+    var d = new Date(ts);
+    return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Botão + thread de comentários sobre o gabarito de uma questão. Pode ser
+  // usado tanto na tela de revisão quanto na tela do simulado (depois de
+  // responder). Todo mundo que tiver acesso àquele simulado pode ler e
+  // escrever — os comentários ficam salvos junto da questão.
+  function renderCommentsToggle(q){
+    if(!q.qid){ q.qid = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+    var wrap = el('div', { style: 'margin-top:4px;' });
+    var count = (q.comments || []).length;
+    var isOpen = !!state.openComments[q.qid];
+    var toggleBtn = el('button', { class: 'link-btn' }, [
+      '💬 ' + (count ? count + (count === 1 ? ' comentário' : ' comentários') : 'Comentar sobre o gabarito')
+    ]);
+    toggleBtn.addEventListener('click', function(){
+      state.openComments[q.qid] = !isOpen;
+      render();
+    });
+    wrap.appendChild(toggleBtn);
+    if(isOpen) wrap.appendChild(renderCommentsThread(q));
+    return wrap;
+  }
+
+  function renderCommentsThread(q){
+    var box = el('div', { class: 'comments-thread' });
+    (q.comments || []).forEach(function(c){
+      box.appendChild(el('div', { class: 'comment-item' }, [
+        el('div', { class: 'comment-meta' }, [c.author + ' · ' + formatDateTime(c.at)]),
+        el('div', { class: 'comment-text' }, [c.text])
+      ]));
+    });
+    if((q.comments || []).length === 0){
+      box.appendChild(el('div', { class: 'hint', style: 'margin-bottom:8px;' }, ['Nenhum comentário ainda — seja o primeiro a comentar sobre o gabarito.']));
+    }
+    var inputRow = el('div', { class: 'comment-input-row' });
+    var input = el('textarea', { class: 'edit-textarea', placeholder: 'Escreva um comentário sobre o gabarito desta questão...', style: 'min-height:50px;' });
+    var sendBtn = el('button', { class: 'btn-ghost' }, ['Comentar']);
+    sendBtn.addEventListener('click', function(){
+      var text = input.value.trim();
+      if(!text) return;
+      q.comments = q.comments || [];
+      q.comments.push({ author: authorLabel(), text: text, at: Date.now() });
+      sendBtn.disabled = true;
+      persistQuestionComments(q).catch(function(e){ console.error(e); }).then(function(){ render(); });
+      render();
+    });
+    inputRow.appendChild(input);
+    inputRow.appendChild(sendBtn);
+    box.appendChild(inputRow);
+    return box;
+  }
+
   function relabelAlternatives(q){
     // Recomputes A/B/C/... letters from the alternatives' current order,
     // keeping the gabarito pointed at the same alternative it was before
@@ -1579,6 +1705,7 @@
         actions.appendChild(editLink);
         actions.appendChild(removeLink);
         item.appendChild(actions);
+        item.appendChild(renderCommentsToggle(q));
       }
 
       list.appendChild(item);
@@ -1768,6 +1895,7 @@
           q.gabaritoComentado
         ]));
       }
+      app.appendChild(renderCommentsToggle(q));
     }
 
     var actions = el('div', { class: 'quiz-actions' });
