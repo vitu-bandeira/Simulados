@@ -283,6 +283,22 @@
 
   .footer-note{ text-align:center; font-size:0.78rem; color:var(--graphite); opacity:0.7; margin-top:26px; }
   .sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(6,7,9,0.72); z-index:1000;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-box{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-lg);
+    padding:22px; width:100%; max-width:400px; box-shadow:0 20px 60px -20px rgba(0,0,0,0.6);
+  }
+  .modal-title{ font-family:var(--serif); font-size:1rem; color:var(--ink); line-height:1.45; margin-bottom:14px; white-space:pre-line; }
+  .modal-input{
+    width:100%; font-family:var(--sans); font-size:0.95rem; padding:10px 12px;
+    border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:var(--ink); margin-bottom:16px;
+  }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:10px; }
+
 </style>
 </head>
 <body>
@@ -307,9 +323,81 @@
   <div class="footer-note" id="footnote"></div>
 </div>
 
+<div id="modal-overlay" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <div id="modal-title" class="modal-title"></div>
+    <input id="modal-input" type="text" class="modal-input" />
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn-ghost">Cancelar</button>
+      <button id="modal-ok" class="btn-primary">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   "use strict";
+
+  /* ============ MODAL (substitui window.prompt/confirm) ============ */
+  // O Chrome (e outros navegadores) deixam a pessoa marcar "impedir que
+  // esta página crie mais caixas de diálogo" depois de ver alguns
+  // prompt()/confirm() seguidos — e a partir daí TODO prompt/confirm nessa
+  // aba passa a retornar null/false na hora, sem mostrar nada, fazendo
+  // botões parecerem quebrados ("aperto e não acontece nada"). Este modal
+  // é HTML normal do próprio site, então não pode ser bloqueado assim.
+  function showModal(opts){
+    return new Promise(function(resolve){
+      var overlay = document.getElementById('modal-overlay');
+      var titleEl = document.getElementById('modal-title');
+      var input = document.getElementById('modal-input');
+      var okBtn = document.getElementById('modal-ok');
+      var cancelBtn = document.getElementById('modal-cancel');
+
+      titleEl.textContent = opts.title || '';
+      if(opts.withInput){
+        input.style.display = 'block';
+        input.value = opts.defaultValue || '';
+      } else {
+        input.style.display = 'none';
+      }
+      okBtn.textContent = opts.confirmLabel || 'OK';
+      cancelBtn.textContent = opts.cancelLabel || 'Cancelar';
+      cancelBtn.style.display = opts.hideCancel ? 'none' : 'inline-block';
+      overlay.style.display = 'flex';
+      if(opts.withInput){ input.focus(); input.select(); }
+      else { okBtn.focus(); }
+
+      function cleanup(){
+        overlay.style.display = 'none';
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+        input.onkeydown = null;
+        document.removeEventListener('keydown', onEsc);
+      }
+      function onEsc(e){ if(e.key === 'Escape'){ cancelBtn.onclick(); } }
+      document.addEventListener('keydown', onEsc);
+
+      okBtn.onclick = function(){
+        var result = opts.withInput ? (input.value.trim() || null) : true;
+        cleanup();
+        resolve(result);
+      };
+      cancelBtn.onclick = function(){
+        cleanup();
+        resolve(opts.withInput ? null : false);
+      };
+      input.onkeydown = function(e){ if(e.key === 'Enter'){ okBtn.onclick(); } };
+    });
+  }
+  // Pede um texto curto (substitui window.prompt). Resolve com a string
+  // (sem espaços nas pontas) ou null se cancelado / deixado em branco.
+  function askText(title, defaultValue){
+    return showModal({ title: title, withInput: true, defaultValue: defaultValue, confirmLabel: 'Salvar' });
+  }
+  // Pede confirmação (substitui window.confirm). Resolve com true/false.
+  function askConfirm(message, confirmLabel){
+    return showModal({ title: message, withInput: false, confirmLabel: confirmLabel || 'Confirmar' });
+  }
 
   /* ============ CONFIG ============ */
   // Cole aqui o Client ID gerado no Google Cloud Console (Origens JavaScript
@@ -322,18 +410,18 @@
     GROUP_FILE_ID: '1cWFMvuXs5FAaoVjTq0hDESvSEkje8j98',
     // Depois que a primeira sala for criada, o app mostra um ID para você
     // colar aqui — assim todo mundo passa a entrar pelas mesmas salas.
-    ROOMS_INDEX_FILE_ID: '1eIpL3yB8E265yocEvZRrzqEKO4cIXMHj',
+    ROOMS_INDEX_FILE_ID: '',
     // E-mail da conta Google do desenvolvedor (a sua). Só essa conta tem
     // permissão de criar o arquivo do Simulado Diário de cada dia — assim
     // ele sempre fica salvo na SUA conta, nunca na de um usuário qualquer.
     // Preencha com o e-mail exato da conta que você usa para entrar no app.
-    DEV_EMAIL: 'victope1234567@gmail.com',
+    DEV_EMAIL: '',
     // Arquivo-índice pequeno que só guarda "qual é o dia de hoje e qual o
     // ID do arquivo de questões de hoje". Criado uma única vez (por você) —
     // depois disso, todo mundo usa esse mesmo índice para achar o arquivo
     // do dia. Cole aqui o ID que o app mostrar na primeira vez que você,
     // logado com o e-mail acima, adicionar uma questão ao Diário.
-    DAILY_INDEX_FILE_ID: '1ufYkfO40K__n7l4PZV0Bc_aQDUIuMblp'
+    DAILY_INDEX_FILE_ID: ''
   };
 
   /* ============ SIMULADO DIÁRIO ============ */
@@ -445,10 +533,8 @@
     if(!dailyIndexFileId){
       dailyIndexFileId = await createJsonFile('simulado-diario-index.json', { day: today, fileId: newId });
       await shareFileAnyoneWriter(dailyIndexFileId);
-      window.prompt(
-        'Índice do Simulado Diário criado! Copie este ID e cole em CONFIG.DAILY_INDEX_FILE_ID no código — assim todo mundo passa a achar o arquivo do dia automaticamente:',
-        dailyIndexFileId
-      );
+      // O ID fica disponível no painel "⚙ Configuração" (visível só para
+      // você), sem depender de um prompt() que o navegador pode bloquear.
     } else {
       dailyIndexData = { day: today, fileId: newId };
       try{ await writeJsonFile(dailyIndexFileId, dailyIndexData); }
@@ -703,13 +789,12 @@
 
   async function ensureRoomsIndexFile(){
     if(roomsIndexFileId) return roomsIndexFileId;
+    if(!isDeveloperAccount()) return null;
     var id = await createJsonFile('simulado-concurso-salas-index.json', {});
     await shareFileAnyoneWriter(id);
     roomsIndexFileId = id;
-    window.prompt(
-      'Índice de salas criado! Copie e envie este ID para configurar CONFIG.ROOMS_INDEX_FILE_ID no código, assim todo mundo vai poder entrar nas mesmas salas pelo código:',
-      id
-    );
+    // O ID fica disponível no painel "⚙ Configuração" (visível só para
+    // você), sem depender de um prompt() que o navegador pode bloquear.
     return id;
   }
 
@@ -724,6 +809,10 @@
 
   async function createRoom(name){
     var indexId = await ensureRoomsIndexFile();
+    if(!indexId){
+      alert('As salas ainda não foram configuradas neste site. Peça para o administrador abrir o app e criar a primeira sala.');
+      return null;
+    }
     var code = genRoomCode();
     while(roomsIndexData[code]){ code = genRoomCode(); }
     var disciplinas = DEFAULT_DISCIPLINAS.map(function(n, i){ return { id: 's' + i, name: n, decks: [] }; });
@@ -935,17 +1024,16 @@
     }
   }
 
-  // Cria o arquivo compartilhado do grupo (uma única vez, feito por quem
-  // administra o site) e já libera edição para "qualquer pessoa com o link".
+  // Cria o arquivo compartilhado do grupo (uma única vez, feito por você) e
+  // já libera edição para "qualquer pessoa com o link".
   async function ensureGroupFile(){
     if(groupFileId) return groupFileId;
+    if(!isDeveloperAccount()) return null;
     var id = await createJsonFile('simulado-concurso-grupo.json', {});
     await shareFileAnyoneWriter(id);
     groupFileId = id;
-    window.prompt(
-      'Arquivo do grupo criado! Copie este ID e envie para quem configurou o site colar em CONFIG.GROUP_FILE_ID no código-fonte, assim todo mundo passa a usar o mesmo arquivo automaticamente:',
-      id
-    );
+    // O ID fica disponível no painel "⚙ Configuração" (visível só para
+    // você), sem depender de um prompt() que o navegador pode bloquear.
     return id;
   }
 
@@ -954,6 +1042,10 @@
     try{
       if(shared){
         var gid = await ensureGroupFile();
+        if(!gid){
+          alert('O arquivo do grupo ainda não foi configurado neste site. Peça para o administrador entrar e salvar algo para o grupo primeiro.');
+          return;
+        }
         groupData[key] = value;
         await writeJsonFile(gid, groupData);
       } else {
@@ -1402,25 +1494,20 @@
     });
     var createBtn = el('button', { class: 'btn-ghost' }, ['+ Criar sala']);
     createBtn.addEventListener('click', async function(){
-      var name = window.prompt('Nome da sala (ex: PM-MA 2026):', '');
+      var name = await askText('Nome da sala (ex: PM-MA 2026):', '');
       if(!name) return;
       var room = await createRoom(name);
-      enterRoom(room);
+      if(room) enterRoom(room);
     });
     joinRow.appendChild(codeInput);
     joinRow.appendChild(joinBtn);
     joinRow.appendChild(createBtn);
     section.appendChild(joinRow);
 
-    if(!CONFIG.ROOMS_INDEX_FILE_ID){
-      var idHint = el('div', { class: 'hint', style: 'margin-top:8px;' }, [
-        'Ainda sem ID fixo configurado para o índice de salas — só esta conta consegue criar/achar salas por enquanto. ',
-        el('button', { class: 'link-btn', onclick: async function(){
-          var id = await ensureRoomsIndexFile();
-          window.prompt('ID do índice de salas (envie para configurar CONFIG.ROOMS_INDEX_FILE_ID):', id);
-        } }, ['Ver/criar ID do índice'])
-      ]);
-      section.appendChild(idHint);
+    if(!CONFIG.ROOMS_INDEX_FILE_ID && !isDeveloperAccount()){
+      section.appendChild(el('div', { class: 'hint', style: 'margin-top:8px;' }, [
+        'As salas deste site ainda estão sendo configuradas pelo administrador — assim que ele criar a primeira sala, entrar com código funciona pra todo mundo.'
+      ]));
     }
 
     var myRoomsList = el('div', { class: 'saved-list', style: 'margin-top:14px;' });
@@ -1482,7 +1569,8 @@
       if(isOwner){
         var delBtn = el('button', { class: 'link-btn danger' }, ['Excluir disciplina']);
         delBtn.addEventListener('click', async function(){
-          if(!window.confirm('Excluir "' + disc.name + '" e todos os simulados dela? Essa ação não pode ser desfeita.')) return;
+          var ok = await askConfirm('Excluir "' + disc.name + '" e todos os simulados dela? Essa ação não pode ser desfeita.', 'Excluir');
+          if(!ok) return;
           room.data.disciplinas = room.data.disciplinas.filter(function(d){ return d.id !== disc.id; });
           await persistRoom();
           render();
@@ -1497,7 +1585,7 @@
     var addRow = el('div', { class: 'row' });
     var addBtn = el('button', { class: 'btn-ghost' }, ['+ Adicionar disciplina']);
     addBtn.addEventListener('click', async function(){
-      var name = window.prompt('Nome da disciplina:', '');
+      var name = await askText('Nome da disciplina:', '');
       if(!name) return;
       room.data.disciplinas.push({ id: 'd' + Date.now(), name: name, decks: [] });
       await persistRoom();
@@ -1546,7 +1634,8 @@
             render();
           } }, ['Abrir']),
           (isOwner || isOwnerEmail(deck.createdByEmail)) ? el('button', { class: 'link-btn danger', onclick: async function(){
-            if(!window.confirm('Excluir "' + deck.name + '"?')) return;
+            var ok = await askConfirm('Excluir "' + deck.name + '"?', 'Excluir');
+            if(!ok) return;
             disc.decks = disc.decks.filter(function(d){ return d.id !== deck.id; });
             await persistRoom();
             render();
@@ -1573,7 +1662,7 @@
       alert('O contexto da sala foi perdido, volta para a sala e tenta de novo.');
       return;
     }
-    var name = window.prompt('Nome deste simulado:', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
+    var name = await askText('Nome deste simulado:', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
     if(!name) return;
     var disc = state.room.data.disciplinas.find(function(d){ return d.id === target.disciplinaId; });
     if(!disc){ alert('Essa disciplina não existe mais (pode ter sido excluída).'); return; }
@@ -1629,7 +1718,7 @@
         var canDelete = !shared || isOwnerEmail(item.createdByEmail);
         var actionBtns = [ el('button', { class: 'link-btn', onclick: function(){ openDeck(item.id, shared); } }, ['Abrir']) ];
         if(canDelete){
-          actionBtns.push(el('button', { class: 'link-btn danger', onclick: function(){ removeDeck(item.id, row, shared); } }, ['Excluir']));
+          actionBtns.push(el('button', { class: 'link-btn danger', onclick: function(){ removeDeck(item.id, row, shared, item.name); } }, ['Excluir']));
         }
         var row = el('div', { class: 'saved-item' }, [
           el('div', {}, [
@@ -1658,13 +1747,14 @@
     });
   }
 
-  function removeDeck(id, rowNode, shared){
-    deleteKey('deck-' + id, shared).then(function(){
-      loadKey('decks-index', shared).then(function(idx){
-        idx = (idx || []).filter(function(d){ return d.id !== id; });
-        saveKey('decks-index', idx, shared).then(function(){ rowNode.remove(); });
-      });
-    });
+  async function removeDeck(id, rowNode, shared, name){
+    var ok = await askConfirm('Excluir "' + (name || 'este simulado') + '"?', 'Excluir');
+    if(!ok) return;
+    await deleteKey('deck-' + id, shared);
+    var idx = (await loadKey('decks-index', shared)) || [];
+    idx = idx.filter(function(d){ return d.id !== id; });
+    await saveKey('decks-index', idx, shared);
+    rowNode.remove();
   }
 
   async function saveCurrentDeck(shared){
@@ -1673,10 +1763,10 @@
       return;
     }
     if(shared){
-      var ok = window.confirm('Isso ficará visível para qualquer pessoa que abrir o link compartilhado deste site. Continuar?');
+      var ok = await askConfirm('Isso ficará visível para qualquer pessoa que abrir o link compartilhado deste site. Continuar?', 'Continuar');
       if(!ok) return;
     }
-    var name = window.prompt('Nome para este simulado' + (shared ? ' (grupo)' : '') + ':', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
+    var name = await askText('Nome para este simulado' + (shared ? ' (grupo)' : '') + ':', 'Simulado ' + new Date().toLocaleDateString('pt-BR'));
     if(!name) return;
     var id = 'd' + Date.now();
     await saveKey('deck-' + id, { questions: state.questions, createdByEmail: userEmail || '' }, shared);
@@ -1922,8 +2012,9 @@
           }, ['Editar questão']);
           var removeLink = el('button', {
             class: 'danger',
-            onclick: function(){
-              if(!confirm('Remover a Questão ' + q.number + '?')) return;
+            onclick: async function(){
+              var ok = await askConfirm('Remover a Questão ' + q.number + '?', 'Remover');
+              if(!ok) return;
               state.questions.splice(i, 1);
               state.questions.forEach(function(qq, idx){ qq.number = idx + 1; });
               render();
