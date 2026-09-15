@@ -470,17 +470,26 @@
 
   // Permissão de editar/remover/adicionar questões no simulado ATUALMENTE
   // aberto. Um simulado recém-colado (ainda não salvo em lugar nenhum) pode
-  // sempre ser mexido — só quem está vendo a tela consegue vê-lo mesmo. Já
-  // salvo (pessoal, do grupo ou de uma sala), só quem criou ou o
-  // desenvolvedor. O Diário usa uma checagem por questão (ver
-  // canManageQuestion), já que ali várias pessoas contribuem juntas.
+  // sempre ser mexido — só quem está vendo a tela consegue vê-lo mesmo. Um
+  // simulado PESSOAL também sempre pode: ele já vive só na sua própria
+  // conta do Drive, ninguém mais tem como nem abri-lo. Já salvo para o
+  // grupo ou numa sala — visíveis para todo mundo — só quem criou ou o
+  // desenvolvedor pode mexer. Se não há dono registrado (simulado salvo
+  // antes desse controle existir), é tratado como "sem dono" e liberado —
+  // a primeira pessoa que editar passa a ser registrada como dono dali pra
+  // frente (ver persistDeckQuestions). O Diário usa uma checagem por
+  // questão (ver canManageQuestion), já que ali várias pessoas contribuem
+  // juntas.
   function canManageDeck(){
-    if(!state.deckRef || state.deckRef.kind === 'daily') return true;
+    if(!state.deckRef) return true;
+    if(state.deckRef.kind === 'daily' || state.deckRef.kind === 'personal') return true;
+    if(!state.deckOwnerEmail) return true; // sem dono registrado ainda — liberado, será adotado
     return isOwnerEmail(state.deckOwnerEmail);
   }
 
   function canManageQuestion(q){
     if(state.deckRef && state.deckRef.kind === 'daily'){
+      if(!q.addedByEmail) return true; // sem autor registrado (questão antiga) — liberado
       return isOwnerEmail(q.addedByEmail);
     }
     return canManageDeck();
@@ -1422,6 +1431,14 @@
 
     // painel de diagnóstico — só aparece pra você (CONFIG.DEV_EMAIL)
     renderDevConfigPanelInto(app);
+
+    // lembrete visível pra qualquer um enquanto DEV_EMAIL não for configurado,
+    // já que enquanto isso ninguém (nem você) tem acesso de desenvolvedor
+    if(!CONFIG.DEV_EMAIL && isSignedIn){
+      app.appendChild(el('div', { class: 'hint', style: 'margin-top:18px; border-top:1px solid var(--line-soft); padding-top:14px;' }, [
+        '⚠ CONFIG.DEV_EMAIL ainda não foi preenchido no código. Enquanto isso, ninguém tem acesso de administrador — cole o e-mail da conta do desenvolvedor lá para liberar isso.'
+      ]));
+    }
   }
 
   // Mostra, só para o desenvolvedor, os IDs que o app já resolveu em
@@ -1848,11 +1865,13 @@
         // aplica edições feitas em questões que a pessoa tinha permissão de mexer
         state.questions.forEach(function(q){
           if(!canManageQuestion(q)) return;
+          if(!q.addedByEmail){ q.addedByEmail = userEmail || ''; q.addedBy = q.addedBy || authorLabel(); } // adota questão sem autor registrado
           var idx = findQuestionIndexFor(fresh.questions, q);
           if(idx >= 0){
             fresh.questions[idx] = Object.assign({}, fresh.questions[idx], {
               text: q.text, alternatives: q.alternatives, gabarito: q.gabarito,
-              gabaritoComentado: q.gabaritoComentado, qid: q.qid
+              gabaritoComentado: q.gabaritoComentado, qid: q.qid,
+              addedByEmail: q.addedByEmail, addedBy: q.addedBy
             });
           } else {
             fresh.questions.push(q);
@@ -1872,11 +1891,17 @@
         var data = await loadKey('deck-' + ref.id, shared);
         if(data){
           data.questions = state.questions;
+          if(shared && !data.createdByEmail){ data.createdByEmail = userEmail || ''; } // adota deck sem dono registrado
           await saveKey('deck-' + ref.id, data, shared);
         }
         var idxList = await loadKey('decks-index', shared) || [];
         var idxItem = idxList.find(function(d){ return d.id === ref.id; });
-        if(idxItem){ idxItem.count = state.questions.length; await saveKey('decks-index', idxList, shared); }
+        if(idxItem){
+          idxItem.count = state.questions.length;
+          if(shared && !idxItem.createdByEmail){ idxItem.createdByEmail = userEmail || ''; idxItem.createdBy = idxItem.createdBy || authorLabel(); }
+          await saveKey('decks-index', idxList, shared);
+        }
+        if(shared) state.deckOwnerEmail = state.deckOwnerEmail || userEmail || null;
       } else if(ref.kind === 'room' && state.room){
         if(!canManageDeck()) return;
         try{ state.room.data = (await readJsonFile(state.room.fileId)) || state.room.data; }catch(e){ /* segue com o que já tem em memória */ }
@@ -1885,7 +1910,9 @@
         if(deck){
           deck.questions = state.questions;
           deck.count = state.questions.length;
+          if(!deck.createdByEmail){ deck.createdByEmail = userEmail || ''; deck.createdBy = deck.createdBy || authorLabel(); } // adota deck sem dono registrado
           await persistRoom();
+          state.deckOwnerEmail = state.deckOwnerEmail || userEmail || null;
         }
       }
     }catch(e){
