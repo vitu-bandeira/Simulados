@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" async defer></script>
 <style>
   :root{
     /* Base surfaces — a deep graphite console, not pure black */
@@ -211,7 +212,9 @@
   /* ---------- Quiz card ---------- */
   .q-meta{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
   .q-count{ font-family:var(--mono); font-size:0.8rem; color:var(--graphite); letter-spacing:0.01em; }
-  .q-text{ font-family:var(--serif); font-weight:400; font-size:1.16rem; line-height:1.5; color:var(--ink); margin:4px 0 22px; }
+  .q-text{ font-family:var(--serif); font-weight:400; font-size:1.16rem; line-height:1.65; color:var(--ink); margin:4px 0 22px; max-width:68ch; }
+  .q-text p{ margin:0 0 16px; }
+  .q-text p:last-child{ margin-bottom:0; }
 
   .alt-list{ display:flex; flex-direction:column; gap:10px; }
   .alt{
@@ -241,6 +244,8 @@
     margin-top:12px; font-size:0.9rem; line-height:1.55; padding:14px 16px; border-radius:var(--radius);
     background:var(--panel-2); color:var(--ink); border:1px solid var(--line); font-family:var(--sans);
   }
+  .comment-box p{ margin:0 0 10px; }
+  .comment-box p:last-child{ margin-bottom:0; }
   .comment-label{ font-family:var(--mono); font-size:0.72rem; color:var(--graphite); margin-bottom:6px; }
 
   .comments-thread{ margin:8px 0 4px; padding:12px 14px; border-radius:10px; background:var(--panel-2); border:1px solid var(--line); }
@@ -402,7 +407,7 @@
   /* ============ CONFIG ============ */
   // Cole aqui o Client ID gerado no Google Cloud Console (Origens JavaScript
   // autorizadas = a URL do seu GitHub Pages, sem barra no final).
-  var CONFIG = {
+   var CONFIG = {
     CLIENT_ID: '1059213534313-6ju5ocufjempla0d8r8n35c7smdnljaf.apps.googleusercontent.com',
     SCOPE: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
     // Depois que o arquivo do grupo for criado uma vez, cole o ID aqui para
@@ -746,10 +751,11 @@
         el('span', { class: 'result-tag ' + tagClass }, [tag])
       ]));
       if(q.gabaritoComentado){
-        app.appendChild(el('div', { class: 'comment-box', style: 'margin-top:-6px; margin-bottom:12px;' }, [
-          el('div', { class: 'comment-label' }, ['Gabarito comentado']),
-          q.gabaritoComentado
-        ]));
+        var cbox1 = el('div', { class: 'comment-box', style: 'margin-top:-6px; margin-bottom:12px;' }, [
+          el('div', { class: 'comment-label' }, ['Gabarito comentado'])
+        ]);
+        cbox1.appendChild(paragraphsEl(q.gabaritoComentado));
+        app.appendChild(cbox1);
       }
     });
 
@@ -1138,14 +1144,127 @@
   // stronger signal, so it's always accepted regardless of sequence.
   function matchQuestionStart(line, expectedNext){
     var mWord = line.match(/^\s*quest[aã]o\s*n?[ºo°]?\s*(\d{1,3})\s*[:\-\)\.]?\s*(.*)$/i);
-    if(mWord) return { text: mWord[2] || "" };
+    if(mWord) return { text: mWord[2] || "", num: parseInt(mWord[1], 10) };
     var mNum = line.match(/^\s*(\d{1,3})\s*[\)\.\-:–]\s*(.*)$/);
     if(mNum){
       var text = mNum[2] || "";
-      if(text.trim().length > 0) return { text: text };
-      if(parseInt(mNum[1], 10) === expectedNext) return { text: "" };
+      if(text.trim().length > 0) return { text: text, num: parseInt(mNum[1], 10) };
+      if(parseInt(mNum[1], 10) === expectedNext) return { text: "", num: expectedNext };
     }
     return null;
+  }
+
+  // Acha blocos de texto de apoio compartilhados por um intervalo de
+  // questões, no padrão comum das provas brasileiras: "TEXTO I — para as
+  // questões de 1 a 10", "Texto para responder às questões 21 a 25", etc.
+  // Retorna [{from, to, text}], onde `text` é tudo que vem depois do
+  // marcador até a primeira questão do intervalo começar.
+  function extractPassages(raw){
+    var lines = raw.replace(/\r\n/g, '\n').split('\n');
+    var markerRe = /texto[^\n]*?quest[oõ]es?\s+(?:de\s+)?(\d{1,3})\s+a\s+(\d{1,3})/i;
+    var passages = [];
+    for(var i = 0; i < lines.length; i++){
+      var m = lines[i].match(markerRe);
+      if(!m) continue;
+      var from = parseInt(m[1], 10), to = parseInt(m[2], 10);
+      if(!(from > 0 && to >= from && to - from < 60)) continue; // sanidade
+      var startRe = new RegExp('^\\s*' + from + '\\s*[\\)\\.\\-:]');
+      var passageLines = [];
+      for(var j = i + 1; j < lines.length; j++){
+        if(startRe.test(lines[j].trim())) break;
+        if(j - i > 500) break; // limite de segurança
+        passageLines.push(lines[j]);
+      }
+      passages.push({ from: from, to: to, text: passageLines.join('\n').trim() });
+    }
+    return passages;
+  }
+
+  // PDFs de simulado quase sempre têm cabeçalho/rodapé/marca d'água que se
+  // repetem em TODA página (nome de quem comprou o curso, site da
+  // plataforma, título da prova). Uma linha que aparece 3+ vezes idêntica
+  // no documento inteiro quase certamente é isso, não conteúdo de questão
+  // — exceto quando a própria linha É algo que o parser precisa reconhecer
+  // (início de questão/alternativa/gabarito/comentário), que fica protegido
+  // mesmo se repetir bastante (ex: "Gabarito: B" se repete várias vezes ao
+  // longo de 100 questões, e isso é normal, não ruído).
+  function stripRepeatedNoise(raw){
+    var lines = raw.replace(/\r\n/g, '\n').split('\n');
+    var freq = {};
+    lines.forEach(function(l){
+      var t = l.trim();
+      if(t) freq[t] = (freq[t] || 0) + 1;
+    });
+    function isProtected(t){
+      return !!matchQuestionStart(t, 1) || ALT_START.test(t) || GAB_ANY.test(t) || COMMENT_START.test(t);
+    }
+    var kept = lines.filter(function(l){
+      var t = l.trim();
+      if(!t) return true;
+      if(freq[t] >= 3 && !isProtected(t)) return false;
+      return true;
+    });
+    return kept.join('\n');
+  }
+
+  /* ============ LEITURA DE PDF (upload direto do simulado) ============ */
+  // Usa o pdf.js (carregado via CDN no <head>) para extrair o texto de um
+  // PDF direto no navegador — sem precisar de nenhum servidor. Provas em
+  // PDF costumam vir em duas colunas (texto de apoio de um lado, questão do
+  // outro), então em vez de simplesmente ler os itens de texto na ordem
+  // bruta em que o PDF os guarda (o que embaralharia as duas colunas),
+  // agrupamos por linha e, quando dá pra perceber que a página tem duas
+  // colunas, lemos a coluna esquerda inteira antes da direita.
+  async function extractTextFromPdf(file){
+    if(typeof pdfjsLib === 'undefined'){
+      throw new Error('A biblioteca de leitura de PDF ainda não carregou. Verifique sua internet e tente de novo em alguns segundos.');
+    }
+    if(!pdfjsLib.GlobalWorkerOptions.workerSrc){
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    var buf = await file.arrayBuffer();
+    var pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    var pages = [];
+    for(var p = 1; p <= pdf.numPages; p++){
+      var page = await pdf.getPage(p);
+      var content = await page.getTextContent();
+      var viewport = page.getViewport({ scale: 1 });
+      pages.push(extractPageText(content.items, viewport.width));
+    }
+    return pages.join('\n\n');
+  }
+
+  function extractPageText(items, pageWidth){
+    if(!items.length) return '';
+    // agrupa itens de texto em linhas, por proximidade vertical (Y)
+    var lines = [];
+    items.forEach(function(it){
+      var y = Math.round(it.transform[5]);
+      var x = it.transform[4];
+      var line = lines.filter(function(l){ return Math.abs(l.y - y) < 3; })[0];
+      if(!line){ line = { y: y, parts: [] }; lines.push(line); }
+      line.parts.push({ x: x, text: it.str });
+    });
+    lines.forEach(function(l){ l.parts.sort(function(a, b){ return a.x - b.x; }); });
+
+    function lineText(l){
+      return l.parts.map(function(p){ return p.text; }).join(' ').replace(/\s+/g, ' ').trim();
+    }
+    function byYDesc(a, b){ return b.y - a.y; } // Y cresce para cima num PDF
+
+    // tenta perceber se a página tem duas colunas: bastante linha
+    // começando bem à esquerda E bastante linha começando bem à direita
+    var mid = pageWidth / 2;
+    var leftCount = lines.filter(function(l){ return l.parts[0].x < mid; }).length;
+    var rightCount = lines.filter(function(l){ return l.parts[0].x >= mid; }).length;
+    var isTwoColumn = leftCount > 3 && rightCount > 3;
+
+    if(!isTwoColumn){
+      return lines.sort(byYDesc).map(lineText).filter(Boolean).join('\n');
+    }
+    var left = lines.filter(function(l){ return l.parts[0].x < mid; }).sort(byYDesc);
+    var right = lines.filter(function(l){ return l.parts[0].x >= mid; }).sort(byYDesc);
+    return left.map(lineText).filter(Boolean).join('\n') + '\n\n' + right.map(lineText).filter(Boolean).join('\n');
   }
 
   function parseQuestions(raw){
@@ -1164,13 +1283,23 @@
 
     lines.forEach(function(rawLine){
       var line = normalizeLine(rawLine.trim());
-      if(line === "") return;
+      if(line === ""){
+        // Blank line: if we're still accumulating a question's stem (no
+        // alternatives yet, not past the gabarito), treat it as a paragraph
+        // break so long reading passages keep their structure instead of
+        // collapsing into one dense wall of text. Elsewhere, blank lines
+        // are just separators and get ignored as before.
+        if(current && !current.locked && current.alternatives.length === 0 && current.text.trim() && !/\n\n$/.test(current.text)){
+          current.text += "\n\n";
+        }
+        return;
+      }
 
       var expectedNext = questions.length + (current ? 2 : 1);
       var qm = matchQuestionStart(line, expectedNext);
       if(qm){
         pushCurrent();
-        current = { number: questions.length + 1, text: qm.text, alternatives: [], gabarito: null, gabaritoComentado: '', locked: false, commentOpen: false };
+        current = { number: questions.length + 1, originalNumber: qm.num, text: qm.text, alternatives: [], gabarito: null, gabaritoComentado: '', locked: false, commentOpen: false };
         return;
       }
 
@@ -1212,10 +1341,25 @@
       if(current.alternatives.length){
         current.alternatives[current.alternatives.length - 1].text += " " + line;
       } else {
-        current.text += (current.text ? " " : "") + line;
+        var endsWithBreak = /\n\n$/.test(current.text);
+        current.text += (current.text && !endsWithBreak ? " " : "") + line;
       }
     });
     pushCurrent();
+
+    // Muitas provas trazem um texto de apoio único, compartilhado por várias
+    // questões seguidas ("TEXTO I — para as questões de 1 a 10"). Sem isso,
+    // cada questão a partir da 2ª perde o contexto do texto, que só ficou
+    // colado na questão 1. Aqui a gente acha esses trechos no texto original
+    // e cola no início de CADA questão que ele cobre.
+    extractPassages(raw).forEach(function(p){
+      questions.forEach(function(q){
+        var num = (q.originalNumber != null) ? q.originalNumber : q.number;
+        if(num >= p.from && num <= p.to && p.text){
+          q.text = p.text + (q.text ? '\n\n' + q.text : '');
+        }
+      });
+    });
 
     // renumber cleanly & drop questions with fewer than 2 alternatives
     var clean = [];
@@ -1363,15 +1507,44 @@
     });
     textarea.value = state.rawText;
 
+    var pdfInput = document.createElement('input');
+    pdfInput.type = 'file';
+    pdfInput.accept = 'application/pdf';
+    pdfInput.style.display = 'none';
+    var pdfBtn = el('button', { class: 'btn-ghost' }, ['📄 Enviar PDF do simulado']);
+    var pdfStatus = el('span', { class: 'hint', style: 'margin-left:10px;' }, ['']);
+    pdfBtn.addEventListener('click', function(){ pdfInput.click(); });
+    pdfInput.addEventListener('change', async function(){
+      var file = pdfInput.files[0];
+      if(!file) return;
+      pdfBtn.disabled = true;
+      pdfBtn.textContent = 'Lendo PDF…';
+      pdfStatus.textContent = 'Isso pode levar alguns segundos num PDF grande.';
+      try{
+        var text = await extractTextFromPdf(file);
+        textarea.value = text;
+        state.rawText = text;
+        pdfStatus.textContent = 'PDF lido! Dá uma conferida no texto abaixo e clica em "Formatar questões".';
+      }catch(e){
+        console.error(e);
+        pdfStatus.textContent = '';
+        alert('Não consegui ler esse PDF: ' + (e.message || 'erro desconhecido') + '. Você ainda pode copiar e colar o texto manualmente.');
+      }
+      pdfBtn.disabled = false;
+      pdfBtn.textContent = '📄 Enviar PDF do simulado';
+      pdfInput.value = '';
+    });
+    var pdfRow = el('div', { class: 'row', style: 'margin-top:0; margin-bottom:16px;' }, [pdfBtn, pdfInput, pdfStatus]);
+
     var hint = el('p', { class: 'hint' },
-      ['Funciona com questões numeradas (1. ou 1)) e alternativas de A a E (a), A), A.) — inclusive coladas em Markdown (### Questão 1, * A) texto, **Gabarito: B**). Se uma questão não tiver o gabarito indicado, você marca a resposta certa na próxima tela, antes de começar.']);
+      ['Funciona com questões numeradas (1. ou 1)) e alternativas de A a E (a), A), A.) — inclusive coladas em Markdown (### Questão 1, * A) texto, **Gabarito: B**) ou extraídas de um PDF. Se uma questão não tiver o gabarito indicado, você marca a resposta certa na próxima tela, antes de começar.']);
 
     var errorBox = null;
 
     var startBtn = el('button', { class: 'btn-primary' }, ['Formatar questões']);
     startBtn.addEventListener('click', function(){
       var raw = textarea.value;
-      var parsed = parseQuestions(raw);
+      var parsed = parseQuestions(stripRepeatedNoise(raw));
       if(parsed.length === 0){
         if(errorBox) errorBox.remove();
         errorBox = el('div', { class: 'error-box' }, [
@@ -1416,6 +1589,7 @@
     var row = el('div', { class: 'row' }, [startBtn]);
 
     app.appendChild(lede);
+    app.appendChild(pdfRow);
     app.appendChild(textarea);
     app.appendChild(hint);
     app.appendChild(row);
@@ -2190,6 +2364,27 @@
     return str.length > n ? str.slice(0, n).trim() + '…' : str;
   }
 
+  // Renderiza um texto como parágrafos de verdade (um <p> por trecho
+  // separado por linha em branco no texto original), em vez de um bloco
+  // único e denso. Essencial para enunciados longos (textos de apoio,
+  // artigos) onde a legibilidade importa muito mais do que numa alternativa
+  // curta. Se não há quebra nenhuma, cai num único parágrafo normalmente.
+  function paragraphsEl(text, className){
+    var wrap = document.createElement('div');
+    if(className) wrap.className = className;
+    var parts = (text || '').split(/\n{2,}/).map(function(p){ return p.trim(); }).filter(Boolean);
+    if(parts.length === 0){
+      wrap.textContent = text || '';
+      return wrap;
+    }
+    parts.forEach(function(p){
+      var pEl = document.createElement('p');
+      pEl.textContent = p;
+      wrap.appendChild(pEl);
+    });
+    return wrap;
+  }
+
   /* ============ QUIZ VIEW ============ */
   function renderQuiz(){
     var progressRow = el('div', { class: 'progress-row' });
@@ -2216,7 +2411,7 @@
       el('span', { class: 'q-count' }, ['Questão ' + (state.currentIndex + 1) + ' de ' + state.questions.length])
     ]);
     app.appendChild(meta);
-    app.appendChild(el('div', { class: 'q-text' }, [q.text]));
+    app.appendChild(paragraphsEl(q.text, 'q-text'));
 
     var altList = el('div', { class: 'alt-list' });
     q.alternatives.forEach(function(a){
@@ -2258,10 +2453,11 @@
       }
       app.appendChild(fb);
       if(q.gabaritoComentado){
-        app.appendChild(el('div', { class: 'comment-box' }, [
-          el('div', { class: 'comment-label' }, ['Gabarito comentado']),
-          q.gabaritoComentado
-        ]));
+        var cbox2 = el('div', { class: 'comment-box' }, [
+          el('div', { class: 'comment-label' }, ['Gabarito comentado'])
+        ]);
+        cbox2.appendChild(paragraphsEl(q.gabaritoComentado));
+        app.appendChild(cbox2);
       }
       app.appendChild(renderCommentsToggle(q));
     }
